@@ -17,6 +17,9 @@ def to_json_value(value: Any) -> Any:
 
 
 class ApiHandler(BaseHTTPRequestHandler):
+    allow_get = False
+    allow_post = False
+
     def send_json(self, payload: dict[str, Any], status: int = 200):
         content = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
@@ -28,18 +31,18 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_GET(self):
-        if self.path.rstrip("/") in {"", "/api", "/api/prompts"}:
-            try:
-                from workflow import get_default_prompts
-
-                self.send_json({"prompts": get_default_prompts()})
-            except Exception as error:
-                self._handle_configuration_error(error)
+        if not self.allow_get:
+            self.send_json({"error": "Not found."}, status=404)
             return
-        self.send_json({"error": "Not found."}, status=404)
+        try:
+            from workflow import get_default_prompts
+
+            self.send_json({"prompts": get_default_prompts()})
+        except Exception as error:
+            self._handle_configuration_error(error)
 
     def do_POST(self):
-        if self.path.rstrip("/") not in {"", "/api/run", "/run"}:
+        if not self.allow_post:
             self.send_json({"error": "Not found."}, status=404)
             return
         try:
