@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
   "openai-agents>=0.22.3",
   "pydantic>=2.0",
+  "python-dotenv>=1.0",
 ]
 
 [tool.vercel]

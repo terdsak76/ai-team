@@ -1,3 +1,4 @@
 
 pydantic>=2.0
 openai-agents>=0.22.3
+python-dotenv>=1.0
