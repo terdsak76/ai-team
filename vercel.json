@@ -1,11 +1,17 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [
-    { "source": "/", "destination": "/web/index.html" },
-    { "source": "/styles.css", "destination": "/web/styles.css" },
-    { "source": "/app.js", "destination": "/web/app.js" }
+  "builds": [
+    { "src": "api/prompts.py", "use": "@vercel/python" },
+    { "src": "api/run.py", "use": "@vercel/python" },
+    { "src": "web/index.html", "use": "@vercel/static" },
+    { "src": "web/styles.css", "use": "@vercel/static" },
+    { "src": "web/app.js", "use": "@vercel/static" }
   ],
-  "functions": {
-    "api/run.py": { "maxDuration": 60 }
-  }
+  "routes": [
+    { "src": "/api/prompts", "dest": "/api/prompts.py" },
+    { "src": "/api/run", "dest": "/api/run.py" },
+    { "src": "/styles.css", "dest": "/web/styles.css" },
+    { "src": "/app.js", "dest": "/web/app.js" },
+    { "src": "/", "dest": "/web/index.html" }
+  ]
 }
