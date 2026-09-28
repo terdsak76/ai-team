@@ -1,0 +1,35 @@
+1.
+Push the project to GitHub, or deploy directly from the project folder.
+
+2.
+From the project root:
+npx vercel login
+npx vercel
+
+3.
+When prompted, choose:
+•
+Link to an existing project or create a new one
+•
+Project root: the current folder
+•
+Accept the default build settings
+4.
+Add environment variables in Vercel Project Settings → Environment Variables:
+OPENROUTER_API_KEY=your_key
+GITHUB_TOKEN=your_token   # optional, for private repositories
+5.
+Deploy to production:
+npx vercel --prod
+web.py is only the local development server. Vercel uses:
+•
+api/prompts.py
+•
+api/run.py
+•
+vercel.json
+•
+Static files under web/
+For local testing:
+./.venv/bin/python web.py
+Vercel’s Python runtime uses the handler classes in api/, while vercel.json routes the static frontend files
