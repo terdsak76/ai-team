@@ -1,2 +1,11 @@
+[project]
+name = "ai-dev-team"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "openai-agents>=0.22.3",
+  "pydantic>=2.0",
+]
+
 [tool.vercel]
 entrypoint = "api.prompts:handler"
