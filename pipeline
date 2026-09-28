@@ -1,0 +1,35 @@
+prompt
+  ↓
+spec
+  ↓
+frontend proposal
+backend proposal
+  ↓
+tester review
+
+Python workflow
+                           │
+                           ▼
+                 ┌──────────────────┐
+                 │ Specification AI │
+                 └────────┬─────────┘
+                          │
+                   structured spec
+                          │
+                human approval/check
+                          │
+             ┌────────────┴────────────┐
+             ▼                         ▼
+      Frontend Agent             Backend Agent
+             │                         │
+             └────────────┬────────────┘
+                          ▼
+                    Tester Agent
+                          │
+                    PASS / FAIL
+                     │       │
+                   DONE    feedback
+                             │
+                    ┌────────┴────────┐
+                    ▼                 ▼
+                Frontend          Backend

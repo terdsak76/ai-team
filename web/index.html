@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f6f8">
+    <title>Agent Team</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="Agent Team home">
+          <span class="brand-mark">AT</span>
+          <span>Agent Team</span>
+        </a>
+        <div class="sidebar-label">WORKSPACE</div>
+        <a class="nav-item active" href="/">
+          <span class="nav-icon">AI</span>
+          <span>Agent workspace</span>
+        </a>
+        <div class="sidebar-bottom">
+          <span class="online-dot"></span>
+          <span>Local workspace</span>
+          <span class="sidebar-version">v1.0</span>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div class="breadcrumb">Workspace <span>/</span> Agent team</div>
+          <div class="topbar-status"><span class="online-dot"></span> Ready</div>
+        </header>
+
+        <section class="page-heading">
+          <div>
+            <div class="eyebrow">AI DEVELOPMENT WORKSPACE</div>
+            <h1>Build with your agent team</h1>
+            <p>Shape the instructions, start a run, and review each agent's output in one place.</p>
+          </div>
+          <div class="team-badge"><span>*</span> 4 agents</div>
+        </section>
+
+        <section class="request-card panel">
+          <div class="section-title">
+            <div class="step-number">01</div>
+            <div>
+              <h2>Describe what to build</h2>
+              <p>Your request starts the specification, implementation, and QA workflow.</p>
+            </div>
+          </div>
+          <label class="sr-only" for="request-input">Project request</label>
+          <textarea id="request-input" class="request-input" rows="4" placeholder="Describe the feature or change you want the team to work on..."></textarea>
+          <div class="repository-field">
+            <label for="repository-input">GitHub repository <span>OPTIONAL</span></label>
+            <input id="repository-input" type="url" autocomplete="url" placeholder="https://github.com/owner/repository">
+            <p>Agents can inspect repository files read-only. Use a server-side GITHUB_TOKEN for private repos.</p>
+          </div>
+          <div class="request-footer">
+            <span class="input-hint">Be specific about goals, requirements, and constraints.</span>
+            <button id="run-button" class="primary-button" type="button">
+              <span class="button-icon">&gt;</span> Run agent team
+            </button>
+          </div>
+          <div id="error-message" class="error-message" role="alert" hidden></div>
+        </section>
+
+        <section class="team-section">
+          <div class="section-title team-title">
+            <div class="step-number">02</div>
+            <div>
+              <h2>Agent prompts &amp; outputs</h2>
+              <p>Edit each agent's system prompt. Changes are saved in this browser.</p>
+            </div>
+          </div>
+          <div class="agent-grid">
+            <article class="agent-card panel" data-agent="specification">
+              <div class="agent-header">
+                <div class="agent-avatar analyst">A</div>
+                <div class="agent-identity"><h3>Requirements Analyst</h3><span>SPECIFICATION</span></div>
+                <span class="agent-state" data-state>READY</span>
+              </div>
+              <label for="prompt-specification">System prompt</label>
+              <textarea id="prompt-specification" class="prompt-input" rows="7" spellcheck="false" placeholder="Loading prompt..."></textarea>
+              <div class="output-heading"><span>Agent output</span><button class="copy-button" data-copy="specification" type="button">Copy</button></div>
+              <pre class="output" data-output="specification">No output yet. Start a run to see the specification.</pre>
+            </article>
+
+            <article class="agent-card panel" data-agent="frontend">
+              <div class="agent-header">
+                <div class="agent-avatar frontend">F</div>
+                <div class="agent-identity"><h3>Frontend Developer</h3><span>IMPLEMENTATION</span></div>
+                <span class="agent-state" data-state>READY</span>
+              </div>
+              <label for="prompt-frontend">System prompt</label>
+              <textarea id="prompt-frontend" class="prompt-input" rows="7" spellcheck="false" placeholder="Loading prompt..."></textarea>
+              <div class="output-heading"><span>Agent output</span><button class="copy-button" data-copy="frontend" type="button">Copy</button></div>
+              <pre class="output" data-output="frontend">No output yet. Start a run to see the frontend proposal.</pre>
+            </article>
+
+            <article class="agent-card panel" data-agent="backend">
+              <div class="agent-header">
+                <div class="agent-avatar backend">B</div>
+                <div class="agent-identity"><h3>Backend Developer</h3><span>IMPLEMENTATION</span></div>
+                <span class="agent-state" data-state>READY</span>
+              </div>
+              <label for="prompt-backend">System prompt</label>
+              <textarea id="prompt-backend" class="prompt-input" rows="7" spellcheck="false" placeholder="Loading prompt..."></textarea>
+              <div class="output-heading"><span>Agent output</span><button class="copy-button" data-copy="backend" type="button">Copy</button></div>
+              <pre class="output" data-output="backend">No output yet. Start a run to see the backend proposal.</pre>
+            </article>
+
+            <article class="agent-card panel" data-agent="tester">
+              <div class="agent-header">
+                <div class="agent-avatar tester">Q</div>
+                <div class="agent-identity"><h3>QA Engineer</h3><span>QUALITY REVIEW</span></div>
+                <span class="agent-state" data-state>READY</span>
+              </div>
+              <label for="prompt-tester">System prompt</label>
+              <textarea id="prompt-tester" class="prompt-input" rows="7" spellcheck="false" placeholder="Loading prompt..."></textarea>
+              <div class="output-heading"><span>Agent output</span><button class="copy-button" data-copy="test_report" type="button">Copy</button></div>
+              <pre class="output" data-output="test_report">No output yet. Start a run to see the QA report.</pre>
+            </article>
+          </div>
+        </section>
+        <footer class="footer">Prompts are saved in this browser. Agent requests are sent to your configured OpenRouter endpoint.</footer>
+      </main>
+    </div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
