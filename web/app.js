@@ -1,9 +1,10 @@
-const AGENT_KEYS = ["specification", "frontend", "backend", "tester"];
-const OUTPUT_KEYS = { specification: "specification", frontend: "frontend", backend: "backend", tester: "test_report" };
+const AGENT_KEYS = ["specification", "ui_ux", "frontend", "backend", "tester"];
+const OUTPUT_KEYS = { specification: "specification", ui_ux: "ui_design", frontend: "frontend", backend: "backend", tester: "test_report" };
+const STORED_OUTPUT_KEYS = { specification: "specification", ui_ux: "ui_ux", frontend: "frontend", backend: "backend", tester: "tester" };
 const PROMPT_STORAGE_KEY = "agent-team-prompts-v1";
 const REPOSITORY_STORAGE_KEY = "agent-team-repository-url-v1";
 const API_BASE_URL = "/api";
-const state = { prompts: {}, running: false };
+const state = { prompts: {}, running: false, currentRunId: "" };
 
 const $ = (selector) => document.querySelector(selector);
 const agentSelector = (key) => `[data-agent="${key}"]`;
@@ -23,6 +24,18 @@ function setAgentState(key, label, className = "") {
 function formatOutput(value) {
   if (typeof value === "string") return value;
   return JSON.stringify(value, null, 2);
+}
+
+function setOutput(key, value) {
+  const element = $(`${agentSelector(key)} [data-output="${OUTPUT_KEYS[key]}"]`);
+  const text = formatOutput(value) ?? "";
+  if ("value" in element) element.value = text;
+  else element.textContent = text;
+}
+
+function getOutputText(key) {
+  const element = $(`${agentSelector(key)} [data-output="${OUTPUT_KEYS[key]}"]`);
+  return "value" in element ? element.value : element.textContent;
 }
 
 function readStorage(key, fallback = "") {
@@ -99,8 +112,7 @@ function setRunState(running) {
 function initializeRunState() {
   for (const key of AGENT_KEYS) {
     setAgentState(key, key === "specification" ? "RUNNING" : "QUEUED", key === "specification" ? "running" : "");
-    $(`${agentSelector(key)} [data-output="${OUTPUT_KEYS[key]}"]`).textContent =
-      key === "specification" ? "Generating the approved specification..." : "Waiting for the previous stage...";
+    setOutput(key, key === "specification" ? "Generating the approved specification..." : "Waiting for the previous stage...");
   }
 }
 
@@ -113,6 +125,12 @@ async function runAgents() {
     $("#request-input").focus();
     return;
   }
+  const requirementCode = $("#requirement-code-input").value.trim();
+  const projectName = $("#project-name-input").value.trim();
+  if (!requirementCode || !projectName) {
+    setError("Enter both a requirement code and project name before starting the agents.");
+    return;
+  }
 
   setError();
   savePrompts();
@@ -123,10 +141,11 @@ async function runAgents() {
     const data = await apiRequest("/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ request, prompts: state.prompts, repository_url: repositoryUrl }),
+      body: JSON.stringify({ request, prompts: state.prompts, repository_url: repositoryUrl, requirement_code: requirementCode, project_name: projectName }),
     });
+    state.currentRunId = data.run_id || "";
     for (const key of AGENT_KEYS) {
-      $(`${agentSelector(key)} [data-output="${OUTPUT_KEYS[key]}"]`).textContent = formatOutput(data[OUTPUT_KEYS[key]]);
+      setOutput(key, data[OUTPUT_KEYS[key]]);
       setAgentState(key, "COMPLETE", "complete");
     }
   } catch (error) {
@@ -139,16 +158,111 @@ async function runAgents() {
   }
 }
 
+async function loadSavedOutputs() {
+  const requirementCode = $("#query-code-input").value.trim();
+  const projectName = $("#query-project-input").value.trim();
+  if (!requirementCode && !projectName) {
+    $("#query-message").textContent = "Enter a requirement code or project name.";
+    return;
+  }
+  const params = new URLSearchParams();
+  if (requirementCode) params.set("requirement_code", requirementCode);
+  if (projectName) params.set("project_name", projectName);
+  try {
+    const data = await apiRequest(`/outputs?${params.toString()}`);
+    const item = data.items?.[0];
+    if (!item) {
+      $("#query-message").textContent = "No saved outputs matched that query.";
+      return;
+    }
+    state.currentRunId = item.run_id;
+    for (const key of AGENT_KEYS) setOutput(key, item.outputs?.[STORED_OUTPUT_KEYS[key]] ?? "");
+    $("#requirement-code-input").value = item.requirement_code;
+    $("#project-name-input").value = item.project_name;
+    $("#query-message").textContent = `Loaded ${item.requirement_code} · ${item.project_name}. Edit the specification below and save it.`;
+  } catch (error) {
+    $("#query-message").textContent = error instanceof Error ? error.message : "Unable to load saved outputs.";
+  }
+}
+
+async function saveSpecification() {
+  if (!state.currentRunId) {
+    setError("Load a saved run or complete a new run before editing its specification.");
+    return;
+  }
+  const specification = $("#specification-editor").value.trim();
+  if (!specification) {
+    setError("The specification cannot be empty.");
+    return;
+  }
+  try {
+    const data = await apiRequest("/specification", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ run_id: state.currentRunId, specification }),
+    });
+    $("#query-message").textContent = `Specification saved as version ${data.version}.`;
+    setError();
+  } catch (error) {
+    setError(error instanceof Error ? error.message : "Unable to save the specification.");
+  }
+}
+
+async function runSelectedAgent(agentKey, button) {
+  if (state.running) return;
+  if (!state.currentRunId) {
+    setError("Load a saved run or complete a full run before running one agent.");
+    return;
+  }
+  const specification = $("#specification-editor").value.trim();
+  if (!specification) {
+    setError("Select or enter a specification before running an agent.");
+    return;
+  }
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "Running...";
+  setError();
+  try {
+    const data = await apiRequest("/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agent: agentKey,
+        run_id: state.currentRunId,
+        specification,
+        ui_design: getOutputText("ui_ux"),
+        prompts: state.prompts,
+        repository_url: $("#repository-input").value.trim(),
+      }),
+    });
+    setOutput(agentKey, data.output);
+    setAgentState(agentKey, "COMPLETE", "complete");
+    $("#query-message").textContent = `${agentKey} output saved as version ${data.version}.`;
+  } catch (error) {
+    setError(error instanceof Error ? error.message : `Unable to run ${agentKey}.`);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}
+
 function initialize() {
   $("#run-button").addEventListener("click", runAgents);
+  $("#query-button").addEventListener("click", loadSavedOutputs);
+  $("#save-specification-button").addEventListener("click", saveSpecification);
   $("#request-input").addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") runAgents();
   });
   for (const key of AGENT_KEYS) $(`#prompt-${key}`).addEventListener("change", savePrompts);
+  document.querySelectorAll("[data-run-agent]").forEach((button) => {
+    button.addEventListener("click", () => runSelectedAgent(button.dataset.runAgent, button));
+  });
   document.querySelectorAll("[data-copy]").forEach((button) => {
     button.addEventListener("click", async () => {
       const outputName = OUTPUT_KEYS[button.dataset.copy] || button.dataset.copy;
-      const text = $(`${agentSelector(button.dataset.copy)} [data-output="${outputName}"]`).textContent;
+      const outputElement = $(`${agentSelector(button.dataset.copy)} [data-output="${outputName}"]`);
+      const text = "value" in outputElement ? outputElement.value : outputElement.textContent;
       try {
         await navigator.clipboard.writeText(text);
         button.textContent = "Copied";

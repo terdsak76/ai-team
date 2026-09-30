@@ -1,0 +1,297 @@
+"""Persistence for agent outputs in Turso."""
+
+from __future__ import annotations
+
+import json
+import os
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Callable
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+class TursoConfigurationError(RuntimeError):
+    """Raised when the Turso connection is not configured or available."""
+
+
+class TursoStore:
+    """Stores one current output row per agent for each workflow run."""
+
+    def __init__(self, url: str | None = None, token: str | None = None):
+        self.url = url or os.getenv("TURSO_URL")
+        self.token = token or os.getenv("TURSO_TOKEN")
+
+    def _connect(self):
+        if not self.url or not self.token:
+            raise TursoConfigurationError("TURSO_URL and TURSO_TOKEN must be configured.")
+        try:
+            import turso_serverless
+        except ImportError as error:
+            raise TursoConfigurationError(
+                "The turso_serverless package is not installed. Install project dependencies first."
+            ) from error
+        return turso_serverless.connect(self.url, auth_token=self.token)
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _serialize(value: Any) -> str:
+        if hasattr(value, "model_dump_json"):
+            return value.model_dump_json(indent=2)
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, indent=2)
+        return str(value)
+
+    @staticmethod
+    def _ensure_schema(conn) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS prompt_output (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                requirement_code TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                request_text TEXT NOT NULL,
+                agent_name TEXT NOT NULL,
+                output TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                is_current INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_prompt_output_requirement_code "
+            "ON prompt_output(requirement_code)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_prompt_output_project_name "
+            "ON prompt_output(project_name)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_prompt_output_run_id "
+            "ON prompt_output(run_id)"
+        )
+
+    def _with_connection(self, operation: Callable[[Any], Any]) -> Any:
+        conn = self._connect()
+        try:
+            self._ensure_schema(conn)
+            result = operation(conn)
+            conn.commit()
+            return result
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _rows(cursor) -> list[dict[str, Any]]:
+        columns = [description[0] for description in cursor.description or ()]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    @staticmethod
+    def _group_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        runs: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            run = runs.setdefault(
+                row["run_id"],
+                {
+                    "run_id": row["run_id"],
+                    "requirement_code": row["requirement_code"],
+                    "project_name": row["project_name"],
+                    "request_text": row["request_text"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "outputs": {},
+                },
+            )
+            run["outputs"][row["agent_name"]] = row["output"]
+            run["updated_at"] = max(run["updated_at"], row["updated_at"])
+        return list(runs.values())
+
+    def save_run(
+        self,
+        *,
+        requirement_code: str,
+        project_name: str,
+        request_text: str,
+        outputs: dict[str, Any],
+    ) -> dict[str, Any]:
+        run_id = uuid.uuid4().hex
+        timestamp = self._now()
+
+        def insert(conn):
+            for agent_name, output in outputs.items():
+                conn.execute(
+                    """
+                    INSERT INTO prompt_output (
+                        run_id, requirement_code, project_name, request_text,
+                        agent_name, output, version, is_current, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        requirement_code,
+                        project_name,
+                        request_text,
+                        agent_name,
+                        self._serialize(output),
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+
+        self._with_connection(insert)
+        return {
+            "run_id": run_id,
+            "requirement_code": requirement_code,
+            "project_name": project_name,
+        }
+
+    def query_runs(
+        self,
+        *,
+        requirement_code: str | None = None,
+        project_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if not requirement_code and not project_name:
+            raise ValueError("Provide a requirement code or project name.")
+
+        def query(conn):
+            clauses = ["is_current = 1"]
+            params: list[str] = []
+            if requirement_code:
+                clauses.append("LOWER(requirement_code) = LOWER(?)")
+                params.append(requirement_code)
+            if project_name:
+                clauses.append("LOWER(project_name) LIKE LOWER(?)")
+                params.append(f"%{project_name}%")
+            cursor = conn.execute(
+                "SELECT run_id, requirement_code, project_name, request_text, "
+                "agent_name, output, version, created_at, updated_at "
+                "FROM prompt_output WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY created_at DESC, id DESC",
+                params,
+            )
+            return self._group_rows(self._rows(cursor))
+
+        return self._with_connection(query)
+
+    def get_run(self, run_id: str) -> dict[str, Any]:
+        def query(conn):
+            cursor = conn.execute(
+                "SELECT run_id, requirement_code, project_name, request_text, "
+                "agent_name, output, version, created_at, updated_at "
+                "FROM prompt_output WHERE run_id = ? AND is_current = 1 "
+                "ORDER BY created_at DESC, id DESC",
+                (run_id,),
+            )
+            runs = self._group_rows(self._rows(cursor))
+            if not runs:
+                raise LookupError("No saved outputs were found for that run.")
+            return runs[0]
+
+        return self._with_connection(query)
+
+    def update_specification(self, *, run_id: str, specification: str) -> dict[str, Any]:
+        if not specification.strip():
+            raise ValueError("The specification cannot be empty.")
+
+        def update(conn):
+            cursor = conn.execute(
+                "SELECT requirement_code, project_name, request_text, version "
+                "FROM prompt_output "
+                "WHERE run_id = ? AND agent_name = 'specification' AND is_current = 1 "
+                "ORDER BY version DESC LIMIT 1",
+                (run_id,),
+            )
+            rows = self._rows(cursor)
+            if not rows:
+                raise LookupError("No saved specification was found for that run.")
+            current = rows[0]
+            timestamp = self._now()
+            conn.execute(
+                "UPDATE prompt_output SET is_current = 0, updated_at = ? "
+                "WHERE run_id = ? AND agent_name = 'specification' AND is_current = 1",
+                (timestamp, run_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO prompt_output (
+                    run_id, requirement_code, project_name, request_text,
+                    agent_name, output, version, is_current, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'specification', ?, ?, 1, ?, ?)
+                """,
+                (
+                    run_id,
+                    current["requirement_code"],
+                    current["project_name"],
+                    current["request_text"],
+                    specification,
+                    int(current["version"]) + 1,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            return {
+                "run_id": run_id,
+                "requirement_code": current["requirement_code"],
+                "project_name": current["project_name"],
+                "version": int(current["version"]) + 1,
+            }
+
+        return self._with_connection(update)
+
+    def save_agent_output(self, *, run_id: str, agent_name: str, output: Any) -> dict[str, Any]:
+        """Version and replace one agent's output within an existing run."""
+        timestamp = self._now()
+
+        def update(conn):
+            cursor = conn.execute(
+                "SELECT requirement_code, project_name, request_text, version "
+                "FROM prompt_output WHERE run_id = ? AND agent_name = ? AND is_current = 1 "
+                "ORDER BY version DESC LIMIT 1",
+                (run_id, agent_name),
+            )
+            current_rows = self._rows(cursor)
+            if not current_rows:
+                raise LookupError("No saved output was found for that agent and run.")
+            current = current_rows[0]
+            next_version = int(current["version"]) + 1
+            conn.execute(
+                "UPDATE prompt_output SET is_current = 0, updated_at = ? "
+                "WHERE run_id = ? AND agent_name = ? AND is_current = 1",
+                (timestamp, run_id, agent_name),
+            )
+            conn.execute(
+                """
+                INSERT INTO prompt_output (
+                    run_id, requirement_code, project_name, request_text,
+                    agent_name, output, version, is_current, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    run_id,
+                    current["requirement_code"],
+                    current["project_name"],
+                    current["request_text"],
+                    agent_name,
+                    self._serialize(output),
+                    next_version,
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            return {
+                "run_id": run_id,
+                "agent_name": agent_name,
+                "version": next_version,
+            }
+
+        return self._with_connection(update)

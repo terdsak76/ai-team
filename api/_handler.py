@@ -5,9 +5,10 @@ from http.server import BaseHTTPRequestHandler
 from typing import Any
 
 from github_repository import GitHubRepositoryError, parse_github_repository
+from turso_store import TursoConfigurationError, TursoStore
 
 MAX_REQUEST_BYTES = 150_000
-PROMPT_KEYS = {"specification", "frontend", "backend", "tester"}
+PROMPT_KEYS = {"specification", "ui_ux", "frontend", "backend", "tester"}
 
 
 def to_json_value(value: Any) -> Any:
@@ -19,6 +20,7 @@ def to_json_value(value: Any) -> Any:
 class ApiHandler(BaseHTTPRequestHandler):
     allow_get = False
     allow_post = False
+    allow_patch = False
 
     def send_json(self, payload: dict[str, Any], status: int = 200):
         content = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -65,11 +67,19 @@ class ApiHandler(BaseHTTPRequestHandler):
         user_request = payload.get("request")
         prompts = payload.get("prompts", {})
         repository_url = payload.get("repository_url", "")
+        requirement_code = payload.get("requirement_code", "")
+        project_name = payload.get("project_name", "")
         if not isinstance(user_request, str) or not user_request.strip():
             self.send_json({"error": "Describe the task before starting the agents."}, status=400)
             return
         if len(user_request) > 20_000:
             self.send_json({"error": "The task description must be 20,000 characters or fewer."}, status=400)
+            return
+        if not isinstance(requirement_code, str) or not requirement_code.strip() or len(requirement_code) > 120:
+            self.send_json({"error": "A requirement code of 120 characters or fewer is required."}, status=400)
+            return
+        if not isinstance(project_name, str) or not project_name.strip() or len(project_name) > 200:
+            self.send_json({"error": "A project name of 200 characters or fewer is required."}, status=400)
             return
         if not isinstance(prompts, dict) or set(prompts) - PROMPT_KEYS:
             self.send_json({"error": "Prompts must contain valid agent names and text values."}, status=400)
@@ -97,15 +107,69 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            result = asyncio.run(run_project(user_request.strip(), prompts, repository_url or None))
+            result = asyncio.run(
+                run_project(
+                    user_request.strip(),
+                    prompts,
+                    repository_url or None,
+                    requirement_code.strip(),
+                    project_name.strip(),
+                )
+            )
         except GitHubRepositoryError as error:
             self.send_json({"error": f"GitHub repository access failed: {error}"}, status=502)
+            return
+        except TursoConfigurationError as error:
+            self.send_json({"error": str(error)}, status=503)
             return
         except Exception:
             traceback.print_exc()
             self.send_json({"error": "The agent workflow failed. Check the function logs for details."}, status=502)
             return
         self.send_json({key: to_json_value(value) for key, value in result.items()})
+
+    def do_PATCH(self):
+        if not self.allow_patch:
+            self.send_json({"error": "Not found."}, status=404)
+            return
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_json({"error": "Invalid Content-Length."}, status=400)
+            return
+        if content_length <= 0 or content_length > MAX_REQUEST_BYTES:
+            self.send_json({"error": "Request body is empty or too large."}, status=413)
+            return
+        try:
+            payload = json.loads(self.rfile.read(content_length))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.send_json({"error": "Request body must be valid JSON."}, status=400)
+            return
+        run_id = payload.get("run_id") if isinstance(payload, dict) else None
+        specification = payload.get("specification") if isinstance(payload, dict) else None
+        if not isinstance(run_id, str) or not run_id.strip():
+            self.send_json({"error": "A run_id is required."}, status=400)
+            return
+        if not isinstance(specification, str) or not specification.strip():
+            self.send_json({"error": "The specification cannot be empty."}, status=400)
+            return
+        try:
+            saved = TursoStore().update_specification(
+                run_id=run_id.strip(),
+                specification=specification,
+            )
+        except LookupError as error:
+            self.send_json({"error": str(error)}, status=404)
+            return
+        except (ValueError, TursoConfigurationError) as error:
+            status = 400 if isinstance(error, ValueError) else 503
+            self.send_json({"error": str(error)}, status=status)
+            return
+        except Exception:
+            traceback.print_exc()
+            self.send_json({"error": "The specification could not be saved."}, status=502)
+            return
+        self.send_json(saved)
 
     def _handle_configuration_error(self, error: Exception):
         traceback.print_exc()

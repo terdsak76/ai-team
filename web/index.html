@@ -38,7 +38,7 @@
             <h1>Build with your agent team</h1>
             <p>Shape the instructions, start a run, and review each agent's output in one place.</p>
           </div>
-          <div class="team-badge"><span>*</span> 4 agents</div>
+          <div class="team-badge"><span>*</span> 5 agents</div>
         </section>
 
         <section class="request-card panel">
@@ -46,11 +46,21 @@
             <div class="step-number">01</div>
             <div>
               <h2>Describe what to build</h2>
-              <p>Your request starts the specification, implementation, and QA workflow.</p>
+              <p>Your request starts the specification, design, implementation, and QA workflow.</p>
             </div>
           </div>
           <label class="sr-only" for="request-input">Project request</label>
           <textarea id="request-input" class="request-input" rows="4" placeholder="Describe the feature or change you want the team to work on..."></textarea>
+          <div class="metadata-fields">
+            <div class="repository-field">
+              <label for="requirement-code-input">Requirement code</label>
+              <input id="requirement-code-input" type="text" maxlength="120" placeholder="REQ-SHIPMENT-001">
+            </div>
+            <div class="repository-field">
+              <label for="project-name-input">Project name</label>
+              <input id="project-name-input" type="text" maxlength="200" placeholder="Shipment Planning">
+            </div>
+          </div>
           <div class="repository-field">
             <label for="repository-input">GitHub repository <span>OPTIONAL</span></label>
             <input id="repository-input" type="url" autocomplete="url" placeholder="https://github.com/owner/repository">
@@ -65,9 +75,25 @@
           <div id="error-message" class="error-message" role="alert" hidden></div>
         </section>
 
+        <section class="saved-output-card panel">
+          <div class="section-title">
+            <div class="step-number">02</div>
+            <div>
+              <h2>Find saved agent outputs</h2>
+              <p>Search Turso by requirement code or project name.</p>
+            </div>
+          </div>
+          <div class="query-row">
+            <input id="query-code-input" type="text" placeholder="Requirement code">
+            <input id="query-project-input" type="text" placeholder="Project name">
+            <button id="query-button" class="secondary-button" type="button">Load outputs</button>
+          </div>
+          <div id="query-message" class="query-message" role="status"></div>
+        </section>
+
         <section class="team-section">
           <div class="section-title team-title">
-            <div class="step-number">02</div>
+            <div class="step-number">03</div>
             <div>
               <h2>Agent prompts &amp; outputs</h2>
               <p>Edit each agent's system prompt. Changes are saved in this browser.</p>
@@ -82,8 +108,20 @@
               </div>
               <label for="prompt-specification">System prompt</label>
               <textarea id="prompt-specification" class="prompt-input" rows="7" spellcheck="false" placeholder="Loading prompt..."></textarea>
-              <div class="output-heading"><span>Agent output</span><button class="copy-button" data-copy="specification" type="button">Copy</button></div>
-              <pre class="output" data-output="specification">No output yet. Start a run to see the specification.</pre>
+              <div class="output-heading"><span>Agent output · editable</span><span><button class="copy-button" data-copy="specification" type="button">Copy</button> <button id="save-specification-button" class="copy-button" type="button">Save edit</button></span></div>
+              <textarea id="specification-editor" class="output output-editor" data-output="specification" spellcheck="false" placeholder="No output yet. Start a run or load a saved run to edit the specification."></textarea>
+            </article>
+
+            <article class="agent-card panel" data-agent="ui_ux">
+              <div class="agent-header">
+                <div class="agent-avatar ui-ux">U</div>
+                <div class="agent-identity"><h3>UI/UX Designer</h3><span>FIGMA-READY DESIGN</span></div>
+                <span class="agent-state" data-state>READY</span>
+              </div>
+              <label for="prompt-ui_ux">System prompt</label>
+              <textarea id="prompt-ui_ux" class="prompt-input" rows="7" spellcheck="false" placeholder="Loading prompt..."></textarea>
+              <div class="output-heading"><span>Agent output</span><span><button class="copy-button" data-run-agent="ui_ux" type="button">Run UI/UX</button> <button class="copy-button" data-copy="ui_ux" type="button">Copy</button></span></div>
+              <pre class="output" data-output="ui_design">No output yet. Start a run to see the Figma-ready UI specification.</pre>
             </article>
 
             <article class="agent-card panel" data-agent="frontend">
@@ -94,7 +132,7 @@
               </div>
               <label for="prompt-frontend">System prompt</label>
               <textarea id="prompt-frontend" class="prompt-input" rows="7" spellcheck="false" placeholder="Loading prompt..."></textarea>
-              <div class="output-heading"><span>Agent output</span><button class="copy-button" data-copy="frontend" type="button">Copy</button></div>
+              <div class="output-heading"><span>Agent output</span><span><button class="copy-button" data-run-agent="frontend" type="button">Run frontend</button> <button class="copy-button" data-copy="frontend" type="button">Copy</button></span></div>
               <pre class="output" data-output="frontend">No output yet. Start a run to see the frontend proposal.</pre>
             </article>
 
@@ -106,7 +144,7 @@
               </div>
               <label for="prompt-backend">System prompt</label>
               <textarea id="prompt-backend" class="prompt-input" rows="7" spellcheck="false" placeholder="Loading prompt..."></textarea>
-              <div class="output-heading"><span>Agent output</span><button class="copy-button" data-copy="backend" type="button">Copy</button></div>
+              <div class="output-heading"><span>Agent output</span><span><button class="copy-button" data-run-agent="backend" type="button">Run backend</button> <button class="copy-button" data-copy="backend" type="button">Copy</button></span></div>
               <pre class="output" data-output="backend">No output yet. Start a run to see the backend proposal.</pre>
             </article>
 

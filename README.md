@@ -1,12 +1,31 @@
 # AI Agent Team
 
+## Phase 1 architecture
+
+`main.py` now enters the Muse orchestration layer. Muse builds and validates a
+task DAG, prepares read-only repository context, forecasts resource conflicts,
+reserves task resources, and schedules work through the in-process Muse task
+queue. The OpenAI Agents SDK runs the five task agents in this order:
+
+```text
+             -> ui/ux -> frontend -\
+specification                         -> tester
+             \-> backend -------------/
+```
+
+The UI/UX agent produces a Figma-ready design specification before frontend
+implementation. Backend remains an independent branch after the functional
+specification, and the tester waits for both implementations. The queue is
+intentionally an in-process adapter so the next phase can replace it with a
+durable Muse queue without changing agent definitions or the web API.
+
 Run the local web interface from the project root:
 
 ```bash
 ./.venv/bin/python web.py
 ```
 
-Then open <http://127.0.0.1:8000>. All four agents use the configured OpenRouter client and `OPENROUTER_API_KEY`
+Then open <http://127.0.0.1:8000>. All five agents use the configured OpenRouter client and `OPENROUTER_API_KEY`
 from `.env`; an `OPENAI_API_KEY` is not required. Prompts are editable per
 agent and saved in the current browser;
 the submitted task and prompts are used for that run only.
@@ -38,6 +57,28 @@ Configure these environment variables in the Vercel project settings:
 
 - `OPENROUTER_API_KEY` (required)
 - `GITHUB_TOKEN` (optional; needed only for private repositories)
+- `TURSO_URL` (required for persistence)
+- `TURSO_TOKEN` (required for persistence)
 
-The browser only calls same-origin `/api/prompts` and `/api/run`, so no public
-API URL or client-side secret is required.
+The browser only calls same-origin `/api/prompts`, `/api/run`, `/api/agent`,
+`/api/outputs`, and `/api/specification`, so no public API URL or client-side
+secret is required.
+
+## Turso persistence
+
+Completed runs are saved to the `prompt_output` table. Each run stores one
+row for the specification, UI/UX design, frontend, backend, and tester output.
+The table is created automatically from the server using these environment
+variables:
+
+- `TURSO_URL`
+- `TURSO_TOKEN`
+
+Use the workspace fields to provide a requirement code and project name. The
+saved-output search accepts either value. Loading a run makes its functional
+specification editable; saving an edit creates a new version while preserving
+the previous database row.
+
+After loading a run, the UI/UX, frontend, and backend cards each have a
+standalone run action. Each action uses the selected specification and saves a
+new version of only that agent's output.

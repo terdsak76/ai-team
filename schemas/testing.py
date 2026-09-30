@@ -8,6 +8,7 @@ class Issue(BaseModel):
     id: str
 
     area: Literal[
+        "ui_ux",
         "frontend",
         "backend",
         "integration",

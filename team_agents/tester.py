@@ -26,11 +26,12 @@ approved specification.
 
 Do not trust claims from the frontend or backend developers.
 
-Check:
+Check the implementation and the UI/UX design against the functional
+specification. Check:
 
 - acceptance criteria
+- UI/UX requirements and responsive behavior
 - frontend behavior
-- backend behavior
 - API integration
 - validation
 - edge cases

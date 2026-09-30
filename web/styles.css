@@ -163,6 +163,7 @@ h1 { margin-bottom: 8px; font-family: "Space Grotesk", sans-serif; font-size: cl
 
 .request-input:focus, .prompt-input:focus { border-color: #a49bf3; box-shadow: 0 0 0 3px rgb(101 88 232 / 9%); }
 textarea::placeholder { color: #a6aab4; }
+.metadata-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
 .repository-field { margin-top: 15px; }
 .repository-field label { display: block; margin-bottom: 7px; color: #727887; font-size: 10px; font-weight: 700; }
 .repository-field label span { margin-left: 5px; color: #a0a5b0; font-size: 9px; letter-spacing: .6px; }
@@ -171,6 +172,13 @@ textarea::placeholder { color: #a6aab4; }
 .repository-field p { margin: 6px 0 0; color: #989daa; font-size: 10px; }
 .request-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
 .input-hint { color: #989daa; font-size: 11px; }
+.saved-output-card { margin-top: 16px; padding: 21px 23px 17px; }
+.query-row { display: flex; gap: 9px; margin-top: 17px; }
+.query-row input { min-width: 0; flex: 1; min-height: 38px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 6px; outline: none; color: var(--ink); }
+.query-row input:focus { border-color: #a49bf3; box-shadow: 0 0 0 3px rgb(101 88 232 / 9%); }
+.secondary-button { min-height: 38px; padding: 0 13px; border: 1px solid var(--border); border-radius: 7px; background: #fff; color: #626979; cursor: pointer; font-size: 12px; font-weight: 700; }
+.secondary-button:hover { border-color: #c9c4f3; color: var(--accent); }
+.query-message { min-height: 16px; margin-top: 9px; color: #727887; font-size: 11px; }
 
 .primary-button {
   display: inline-flex;
@@ -201,6 +209,7 @@ textarea::placeholder { color: #a6aab4; }
 .agent-avatar { display: grid; width: 35px; height: 35px; flex: 0 0 35px; place-items: center; border-radius: 10px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; font-weight: 700; }
 .agent-avatar.analyst { background: #eeeaff; color: #6558e8; }
 .agent-avatar.frontend { background: #e6f2ff; color: #367ac1; }
+.agent-avatar.ui-ux { background: #f8e9ff; color: #a344c4; }
 .agent-avatar.backend { background: #e7f6f0; color: #278867; }
 .agent-avatar.tester { background: #fff1e6; color: #d47d35; }
 .agent-identity { min-width: 0; }
@@ -245,6 +254,8 @@ textarea::placeholder { color: #a6aab4; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.output-editor { display: block; width: 100%; resize: vertical; outline: none; }
+.output-editor:focus { border-color: #a49bf3; box-shadow: 0 0 0 3px rgb(101 88 232 / 9%); }
 
 .footer { padding: 20px 2px 0; color: #a1a5af; font-size: 10px; text-align: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
@@ -266,6 +277,8 @@ textarea::placeholder { color: #a6aab4; }
   .page-heading p { max-width: 390px; font-size: 12px; }
   .agent-grid { grid-template-columns: 1fr; }
   .request-card { padding: 17px 15px 14px; }
+  .metadata-fields { grid-template-columns: 1fr; gap: 0; }
+  .query-row { align-items: stretch; flex-direction: column; }
   .request-footer { align-items: flex-start; flex-direction: column; }
   .primary-button { width: 100%; }
 }
