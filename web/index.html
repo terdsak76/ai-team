@@ -81,6 +81,11 @@
                   <input id="master-token" type="password" maxlength="500" autocomplete="new-password" placeholder="Leave blank to keep the saved token">
                 </div>
                 <label class="token-clear"><input id="clear-master-token" type="checkbox"> Clear the saved token</label>
+                <div class="repository-field project-context-field">
+                  <label for="master-project-context">Project context summary</label>
+                  <textarea id="master-project-context" rows="5" maxlength="20000" placeholder="Architecture, technology conventions, important decisions, and durable constraints..."></textarea>
+                  <p>This compact summary is supplied to the Specification Agent for new tasks.</p>
+                </div>
               </div>
               <div class="prompt-master-grid">
                 <div class="master-prompt-field"><label for="master-prompt-specification">Requirements analyst prompt</label><textarea id="master-prompt-specification" data-project-prompt="specification" rows="5" spellcheck="false"></textarea></div>

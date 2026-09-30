@@ -31,7 +31,10 @@ agent in the browser, or saved as project master data from the Projects menu.
 A project stores its name, GitHub repository, private-repository token, and
 the system prompt for each of the five agents. The token is kept server-side
 and is not returned to the browser. Selecting a project for a run applies its
-saved repository connection and prompts.
+saved repository connection and prompts. Project master data also includes a
+compact context summary. New project runs retrieve relevant durable memories
+and provide the summary and memories to the Specification Agent before the
+new task is processed.
 
 To give agents read-only access to a GitHub repository, enter its URL in the
 workspace, such as `https://github.com/owner/repository`, or save it in a
@@ -70,7 +73,9 @@ secret is required.
 
 ## Turso persistence
 
-Project master records are saved to the `project` table. Completed runs are saved to the `prompt_output` table. Each run stores one
+Project master records are saved to the `project` table. Durable task memories
+are saved to `project_memory`. Completed runs are saved to the
+`prompt_output` table. Each run stores one
 row for the specification, UI/UX design, frontend, backend, and tester output.
 The table is created automatically from the server using these environment
 variables:

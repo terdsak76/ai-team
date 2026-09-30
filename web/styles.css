@@ -160,6 +160,9 @@ h1 { margin-bottom: 8px; font-family: "Space Grotesk", sans-serif; font-size: cl
 .project-form-heading p { margin: 0; color: var(--muted); font-size: 10px; }
 .project-form-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 15px; }
 .project-form-fields .repository-field:nth-child(3) { grid-column: 1 / -1; }
+.project-context-field { grid-column: 1 / -1; }
+.project-context-field textarea { display: block; width: 100%; min-height: 100px; padding: 9px 10px; resize: vertical; border: 1px solid var(--border); border-radius: 6px; outline: none; background: #fbfbfc; color: #505665; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.5; }
+.project-context-field textarea:focus { border-color: #a49bf3; box-shadow: 0 0 0 3px rgb(101 88 232 / 9%); }
 .token-clear { display: flex; align-items: center; gap: 6px; margin-top: 9px; color: var(--muted); font-size: 10px; }
 .prompt-master-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 15px; }
 .master-prompt-field label { display: block; margin-bottom: 6px; color: #727887; font-size: 10px; font-weight: 700; }
@@ -311,6 +314,7 @@ textarea::placeholder { color: #a6aab4; }
   .metadata-fields { grid-template-columns: 1fr; gap: 0; }
   .project-manager-layout, .prompt-master-grid, .project-form-fields { grid-template-columns: 1fr; }
   .project-form-fields .repository-field:nth-child(3) { grid-column: auto; }
+  .project-context-field { grid-column: auto; }
   .project-selection { align-items: stretch; flex-direction: column; gap: 0; }
   .project-selection .secondary-button { width: 100%; }
   .query-row { align-items: stretch; flex-direction: column; }

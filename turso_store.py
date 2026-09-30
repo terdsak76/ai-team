@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -66,6 +67,7 @@ class TursoStore:
                 project_name TEXT NOT NULL COLLATE NOCASE UNIQUE,
                 github_repo TEXT NOT NULL DEFAULT '',
                 github_token TEXT NOT NULL DEFAULT '',
+                project_context TEXT NOT NULL DEFAULT '',
                 system_prompt_specification TEXT NOT NULL,
                 system_prompt_ui_ux TEXT NOT NULL,
                 system_prompt_frontend TEXT NOT NULL,
@@ -78,6 +80,31 @@ class TursoStore:
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_project_name ON project(project_name)"
+        )
+        project_columns = conn.execute("PRAGMA table_info(project)").fetchall()
+        if "project_context" not in {row[1] for row in project_columns}:
+            conn.execute(
+                "ALTER TABLE project ADD COLUMN project_context TEXT NOT NULL DEFAULT ''"
+            )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                memory_type TEXT NOT NULL DEFAULT 'task_summary',
+                content TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '',
+                source_run_id TEXT,
+                confidence REAL NOT NULL DEFAULT 1.0,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_project_memory_project "
+            "ON project_memory(project_id, is_active, updated_at)"
         )
         conn.execute(
             """
@@ -127,6 +154,7 @@ class TursoStore:
             "github_repo": row["github_repo"] or "",
             "github_token": row.get("github_token", "") or "",
             "github_token_set": bool(row.get("github_token", "")),
+            "project_context": row.get("project_context", "") or "",
             "system_prompts": prompts,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -139,6 +167,7 @@ class TursoStore:
         project_name: str,
         github_repo: str,
         github_token: str,
+        project_context: str,
         system_prompts: dict[str, str],
         timestamp: str,
     ) -> tuple[Any, ...]:
@@ -146,6 +175,7 @@ class TursoStore:
             project_name,
             github_repo,
             github_token,
+            project_context,
             *(system_prompts[key] for key in cls.PROJECT_PROMPT_KEYS),
             timestamp,
             timestamp,
@@ -154,7 +184,7 @@ class TursoStore:
     def list_projects(self) -> list[dict[str, Any]]:
         def query(conn):
             cursor = conn.execute(
-                "SELECT id, project_name, github_repo, github_token, "
+                "SELECT id, project_name, github_repo, github_token, project_context, "
                 "system_prompt_specification, system_prompt_ui_ux, "
                 "system_prompt_frontend, system_prompt_backend, system_prompt_tester, "
                 "created_at, updated_at FROM project ORDER BY project_name COLLATE NOCASE"
@@ -171,7 +201,7 @@ class TursoStore:
     def get_project(self, project_id: int) -> dict[str, Any]:
         def query(conn):
             cursor = conn.execute(
-                "SELECT id, project_name, github_repo, github_token, "
+                "SELECT id, project_name, github_repo, github_token, project_context, "
                 "system_prompt_specification, system_prompt_ui_ux, "
                 "system_prompt_frontend, system_prompt_backend, system_prompt_tester, "
                 "created_at, updated_at FROM project WHERE id = ?",
@@ -190,6 +220,7 @@ class TursoStore:
         project_name: str,
         github_repo: str = "",
         github_token: str = "",
+        project_context: str = "",
         system_prompts: dict[str, str],
     ) -> dict[str, Any]:
         timestamp = self._now()
@@ -198,16 +229,17 @@ class TursoStore:
             cursor = conn.execute(
                 """
                 INSERT INTO project (
-                    project_name, github_repo, github_token,
+                    project_name, github_repo, github_token, project_context,
                     system_prompt_specification, system_prompt_ui_ux,
                     system_prompt_frontend, system_prompt_backend, system_prompt_tester,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._project_params(
                     project_name=project_name,
                     github_repo=github_repo,
                     github_token=github_token,
+                    project_context=project_context,
                     system_prompts=system_prompts,
                     timestamp=timestamp,
                 ),
@@ -224,6 +256,7 @@ class TursoStore:
         project_name: str,
         github_repo: str = "",
         github_token: str | None = None,
+        project_context: str = "",
         clear_github_token: bool = False,
         system_prompts: dict[str, str],
     ) -> dict[str, Any]:
@@ -242,7 +275,7 @@ class TursoStore:
             cursor = conn.execute(
                 """
                 UPDATE project SET
-                    project_name = ?, github_repo = ?, github_token = ?,
+                    project_name = ?, github_repo = ?, github_token = ?, project_context = ?,
                     system_prompt_specification = ?, system_prompt_ui_ux = ?,
                     system_prompt_frontend = ?, system_prompt_backend = ?,
                     system_prompt_tester = ?, updated_at = ?
@@ -252,6 +285,7 @@ class TursoStore:
                     project_name,
                     github_repo,
                     saved_token,
+                    project_context,
                     *(system_prompts[key] for key in self.PROJECT_PROMPT_KEYS),
                     timestamp,
                     project_id,
@@ -262,6 +296,119 @@ class TursoStore:
 
         self._with_connection(update)
         return self.get_project(project_id)
+
+    @staticmethod
+    def _memory_from_row(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": int(row["id"]),
+            "project_id": int(row["project_id"]),
+            "memory_type": row["memory_type"],
+            "content": row["content"],
+            "tags": row["tags"] or "",
+            "source_run_id": row.get("source_run_id"),
+            "confidence": float(row["confidence"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def create_project_memory(
+        self,
+        *,
+        project_id: int,
+        content: str,
+        memory_type: str = "task_summary",
+        tags: str = "",
+        source_run_id: str | None = None,
+        confidence: float = 1.0,
+    ) -> dict[str, Any]:
+        if not content or not content.strip():
+            raise ValueError("Project memory cannot be empty.")
+        timestamp = self._now()
+
+        def insert(conn):
+            cursor = conn.execute(
+                """
+                INSERT INTO project_memory (
+                    project_id, memory_type, content, tags, source_run_id,
+                    confidence, is_active, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    project_id,
+                    memory_type.strip() or "task_summary",
+                    content.strip()[:12_000],
+                    tags.strip()[:500],
+                    source_run_id,
+                    max(0.0, min(1.0, float(confidence))),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+        memory_id = self._with_connection(insert)
+
+        def query(conn):
+            cursor = conn.execute(
+                "SELECT id, project_id, memory_type, content, tags, source_run_id, "
+                "confidence, created_at, updated_at FROM project_memory WHERE id = ?",
+                (memory_id,),
+            )
+            rows = self._rows(cursor)
+            if not rows:
+                raise LookupError("The project memory was not found after saving.")
+            return self._memory_from_row(rows[0])
+
+        return self._with_connection(query)
+
+    def list_project_memories(
+        self, *, project_id: int, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        def query(conn):
+            cursor = conn.execute(
+                "SELECT id, project_id, memory_type, content, tags, source_run_id, "
+                "confidence, created_at, updated_at FROM project_memory "
+                "WHERE project_id = ? AND is_active = 1 "
+                "ORDER BY updated_at DESC LIMIT ?",
+                (project_id, max(1, min(200, limit))),
+            )
+            return [self._memory_from_row(row) for row in self._rows(cursor)]
+
+        return self._with_connection(query)
+
+    def get_relevant_project_memories(
+        self, *, project_id: int, task_text: str, limit: int = 8
+    ) -> list[dict[str, Any]]:
+        stop_words = {
+            "the", "and", "for", "with", "from", "that", "this", "will",
+            "should", "could", "would", "into", "have", "has", "are", "was",
+            "were", "its", "our", "their", "new", "task", "build", "create",
+        }
+        terms = {
+            term
+            for term in re.findall(r"[a-z0-9_]{3,}", (task_text or "").casefold())
+            if term not in stop_words
+        }
+
+        def query(conn):
+            cursor = conn.execute(
+                "SELECT id, project_id, memory_type, content, tags, source_run_id, "
+                "confidence, created_at, updated_at FROM project_memory "
+                "WHERE project_id = ? AND is_active = 1 "
+                "ORDER BY updated_at DESC LIMIT 200",
+                (project_id,),
+            )
+            ranked = []
+            for row in self._rows(cursor):
+                memory = self._memory_from_row(row)
+                haystack = f"{memory['tags']} {memory['content']}".casefold()
+                score = sum(1 for term in terms if term in haystack)
+                if score:
+                    ranked.append((score, memory["updated_at"], memory))
+            ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            return [item[2] for item in ranked[: max(1, min(20, limit))]]
+
+        return self._with_connection(query)
 
     def _with_connection(self, operation: Callable[[Any], Any]) -> Any:
         conn = self._connect()

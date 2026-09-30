@@ -35,6 +35,7 @@ def project_fields(payload: dict[str, Any], allow_blank_token: bool = False) -> 
     project_name = payload.get("project_name", "")
     github_repo = payload.get("github_repo", "")
     github_token = payload.get("github_token", "")
+    project_context = payload.get("project_context", "")
     prompts = payload.get("system_prompts", get_default_prompts())
     if not isinstance(project_name, str) or not project_name.strip() or len(project_name) > 200:
         raise ValueError("A project name of 200 characters or fewer is required.")
@@ -45,6 +46,8 @@ def project_fields(payload: dict[str, Any], allow_blank_token: bool = False) -> 
         parse_github_repository(github_repo)
     if not isinstance(github_token, str) or len(github_token) > 500:
         raise ValueError("The GitHub token is invalid.")
+    if not isinstance(project_context, str) or len(project_context) > 20_000:
+        raise ValueError("Project context must be 20,000 characters or fewer.")
     if not isinstance(prompts, dict) or set(prompts) != PROMPT_KEYS:
         raise ValueError("Each agent system prompt is required.")
     if any(not isinstance(value, str) or not value.strip() for value in prompts.values()):
@@ -55,6 +58,7 @@ def project_fields(payload: dict[str, Any], allow_blank_token: bool = False) -> 
         "project_name": project_name.strip(),
         "github_repo": github_repo,
         "github_token": github_token if (github_token or not allow_blank_token) else None,
+        "project_context": project_context.strip(),
         "clear_github_token": bool(payload.get("clear_github_token", False)),
         "system_prompts": prompts,
     }

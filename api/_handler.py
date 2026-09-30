@@ -75,7 +75,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             try:
                 if isinstance(project_id, bool):
                     raise ValueError
-                project = TursoStore().get_project(int(project_id))
+                project_id = int(project_id)
+                project = TursoStore().get_project(project_id)
             except (TypeError, ValueError):
                 self.send_json({"error": "The selected project is invalid."}, status=400)
                 return
@@ -133,6 +134,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     requirement_code.strip(),
                     project_name.strip(),
                     github_token,
+                    project_id=project_id,
                 )
             )
         except GitHubRepositoryError as error:

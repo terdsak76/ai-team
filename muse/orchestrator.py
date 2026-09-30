@@ -54,9 +54,13 @@ class MuseOrchestrator:
         prompts: dict[str, str] | None = None,
         repository_url: str | None = None,
         github_token: str | None = None,
+        project_context: str = "",
+        project_memories: list[dict[str, Any]] | None = None,
     ):
         self.prompts = prompts or {}
         self.repository = RepositoryCoordinator(repository_url, github_token)
+        self.project_context = project_context.strip()
+        self.project_memories = project_memories or []
         self.reservations = ReservationManager()
         self._active_reservations: dict[str, Reservation] = {}
         self._effective_system_prompts: dict[str, str] = {}
@@ -152,7 +156,21 @@ class MuseOrchestrator:
     ) -> Any:
         agent = self._configured_agent(task_id, repository_instructions, repository_tools)
         if task_id == "specification":
-            return (await Runner.run(agent, user_request)).final_output
+            prompt = f"""
+PROJECT CONTEXT:
+{self.project_context or "No saved project context is available."}
+
+RELEVANT PROJECT MEMORY:
+{self._format_project_memories()}
+
+NEW TASK:
+{user_request}
+
+Use the project context and memories as background only. Prioritize the new
+task and identify any conflicts instead of silently assuming that old memory
+is still correct.
+"""
+            return (await Runner.run(agent, prompt)).final_output
 
         specification = outputs["specification"]
         spec_json = (
@@ -207,6 +225,19 @@ BACKEND IMPLEMENTATION:
 {outputs["backend"]}
 """
         return (await Runner.run(agent, prompt)).final_output
+
+    def _format_project_memories(self) -> str:
+        if not self.project_memories:
+            return "No relevant project memories were found."
+        lines: list[str] = []
+        total_chars = 0
+        for memory in self.project_memories:
+            line = f"- [{memory.get('memory_type', 'memory')}] {memory.get('content', '')[:2_000]}"
+            if total_chars + len(line) > 12_000:
+                break
+            lines.append(line)
+            total_chars += len(line)
+        return "\n".join(lines) or "No relevant project memories were found."
 
     async def run_single_agent(
         self,
@@ -267,11 +298,28 @@ async def run_project(
     requirement_code: str | None = None,
     project_name: str | None = None,
     github_token: str | None = None,
+    project_id: int | None = None,
 ) -> dict[str, Any]:
     """Compatibility entrypoint used by the web and Vercel handlers."""
-    orchestrator = MuseOrchestrator(prompts, repository_url, github_token)
+    store = TursoStore()
+    project_context = ""
+    project_memories: list[dict[str, Any]] = []
+    if project_id is not None:
+        project = store.get_project(project_id)
+        project_context = project["project_context"][:8_000]
+        project_memories = store.get_relevant_project_memories(
+            project_id=project_id,
+            task_text=user_request,
+        )
+    orchestrator = MuseOrchestrator(
+        prompts,
+        repository_url,
+        github_token,
+        project_context,
+        project_memories,
+    )
     result = await orchestrator.run(user_request)
-    saved = TursoStore().save_run(
+    saved = store.save_run(
         requirement_code=requirement_code.strip() if requirement_code and requirement_code.strip() else f"REQ-{uuid.uuid4().hex[:8].upper()}",
         project_name=project_name.strip() if project_name and project_name.strip() else "Unnamed project",
         request_text=user_request,
@@ -284,6 +332,44 @@ async def run_project(
         },
         system_prompts=orchestrator._effective_system_prompts,
     )
+    if project_id is not None:
+        store.create_project_memory(
+            project_id=project_id,
+            memory_type="task_summary",
+            content=_build_task_memory(user_request, result.specification),
+            tags=_memory_tags(result.specification),
+            source_run_id=saved["run_id"],
+        )
     response = result.as_dict()
     response.update(saved)
     return response
+
+
+def _build_task_memory(user_request: str, specification: Any) -> str:
+    """Create a compact durable memory from the approved specification."""
+    if hasattr(specification, "model_dump"):
+        data = specification.model_dump(mode="json")
+    else:
+        return f"Completed task: {user_request[:1000]}"
+
+    lines = [
+        f"Feature: {data.get('feature_name', '')}",
+        f"Summary: {data.get('summary', '')}",
+    ]
+    for label, key in (
+        ("Frontend", "frontend_tasks"),
+        ("Backend", "backend_tasks"),
+        ("Assumptions", "assumptions"),
+        ("Open questions", "open_questions"),
+    ):
+        values = data.get(key) or []
+        if values:
+            lines.append(f"{label}: " + "; ".join(str(value) for value in values[:4]))
+    return "\n".join(lines)[:4_000]
+
+
+def _memory_tags(specification: Any) -> str:
+    if hasattr(specification, "model_dump"):
+        data = specification.model_dump(mode="json")
+        return str(data.get("feature_name", ""))[:200]
+    return ""

@@ -148,6 +148,7 @@ function populateProjectForm(project = null) {
   $("#project-form-title").textContent = project ? `Edit ${project.project_name}` : "New project";
   $("#master-project-name").value = project?.project_name ?? "";
   $("#master-repository").value = project?.github_repo ?? "";
+  $("#master-project-context").value = project?.project_context ?? "";
   $("#master-token").value = "";
   $("#master-token").placeholder = project?.github_token_set ? "Leave blank to keep the saved token" : "ghp_...";
   $("#clear-master-token").checked = false;
@@ -210,6 +211,7 @@ async function saveProject(event) {
     project_name: $("#master-project-name").value.trim(),
     github_repo: $("#master-repository").value.trim(),
     github_token: $("#master-token").value,
+    project_context: $("#master-project-context").value.trim(),
     clear_github_token: $("#clear-master-token").checked,
     system_prompts: systemPrompts,
   };
