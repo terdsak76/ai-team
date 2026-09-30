@@ -26,14 +26,18 @@ Run the local web interface from the project root:
 ```
 
 Then open <http://127.0.0.1:8000>. All five agents use the configured OpenRouter client and `OPENROUTER_API_KEY`
-from `.env`; an `OPENAI_API_KEY` is not required. Prompts are editable per
-agent and saved in the current browser;
-the submitted task and prompts are used for that run only.
+from `.env`; an `OPENAI_API_KEY` is not required. Prompts can be edited per
+agent in the browser, or saved as project master data from the Projects menu.
+A project stores its name, GitHub repository, private-repository token, and
+the system prompt for each of the five agents. The token is kept server-side
+and is not returned to the browser. Selecting a project for a run applies its
+saved repository connection and prompts.
 
 To give agents read-only access to a GitHub repository, enter its URL in the
-workspace, such as `https://github.com/owner/repository`. Public repositories
-work without a token. For private repositories, set `GITHUB_TOKEN` in the
-server environment to a fine-grained token with read-only contents access.
+workspace, such as `https://github.com/owner/repository`, or save it in a
+project master record. Public repositories work without a token. Private
+repositories can use the project token; the server-level `GITHUB_TOKEN`
+environment variable remains available for manually entered repositories.
 The token stays on the server. Agents can list and read UTF-8 files up to 40 KB;
 generated directories and common secret files are excluded. Repository code
 that agents read is sent to the configured model provider as part of the run.
@@ -60,13 +64,13 @@ Configure these environment variables in the Vercel project settings:
 - `TURSO_URL` (required for persistence)
 - `TURSO_TOKEN` (required for persistence)
 
-The browser only calls same-origin `/api/prompts`, `/api/run`, `/api/agent`,
-`/api/outputs`, and `/api/specification`, so no public API URL or client-side
+The browser only calls same-origin `/api/prompts`, `/api/projects`, `/api/run`,
+`/api/agent`, `/api/outputs`, and `/api/specification`, so no public API URL or client-side
 secret is required.
 
 ## Turso persistence
 
-Completed runs are saved to the `prompt_output` table. Each run stores one
+Project master records are saved to the `project` table. Completed runs are saved to the `prompt_output` table. Each run stores one
 row for the specification, UI/UX design, frontend, backend, and tester output.
 The table is created automatically from the server using these environment
 variables:

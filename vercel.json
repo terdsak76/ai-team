@@ -6,6 +6,7 @@
     { "src": "api/agent.py", "use": "@vercel/python" },
     { "src": "api/outputs.py", "use": "@vercel/python" },
     { "src": "api/specification.py", "use": "@vercel/python" },
+    { "src": "api/projects.py", "use": "@vercel/python" },
     { "src": "web/index.html", "use": "@vercel/static" },
     { "src": "web/styles.css", "use": "@vercel/static" },
     { "src": "web/app.js", "use": "@vercel/static" }
@@ -16,6 +17,8 @@
     { "src": "/api/agent", "dest": "/api/agent.py" },
     { "src": "/api/outputs", "dest": "/api/outputs.py" },
     { "src": "/api/specification", "dest": "/api/specification.py" },
+    { "src": "/api/projects", "dest": "/api/projects.py" },
+    { "src": "/api/projects/(.*)", "dest": "/api/projects.py" },
     { "src": "/styles.css", "dest": "/web/styles.css" },
     { "src": "/app.js", "dest": "/web/app.js" },
     { "src": "/", "dest": "/web/index.html" }

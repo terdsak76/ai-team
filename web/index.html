@@ -19,6 +19,10 @@
           <span class="nav-icon">AI</span>
           <span>Agent workspace</span>
         </a>
+        <button id="projects-nav" class="nav-item nav-button" type="button">
+          <span class="nav-icon">P</span>
+          <span>Projects</span>
+        </button>
         <div class="sidebar-bottom">
           <span class="online-dot"></span>
           <span>Local workspace</span>
@@ -41,6 +45,58 @@
           <div class="team-badge"><span>*</span> 5 agents</div>
         </section>
 
+        <section id="project-manager" class="project-manager panel" hidden>
+          <div class="section-title">
+            <div class="step-number">PM</div>
+            <div>
+              <h2>Project master data</h2>
+              <p>Save the repository connection and the system prompt used by each agent.</p>
+            </div>
+          </div>
+          <div class="project-manager-layout">
+            <div>
+              <div class="project-list-heading">Saved projects</div>
+              <div id="project-list" class="project-list" aria-live="polite">Loading projects...</div>
+            </div>
+            <form id="project-form" class="project-form">
+              <input id="project-id-input" type="hidden">
+              <div class="project-form-heading">
+                <div>
+                  <h3 id="project-form-title">New project</h3>
+                  <p>Tokens are stored on the server and are never shown after saving.</p>
+                </div>
+                <button id="new-project-button" class="copy-button" type="button">New</button>
+              </div>
+              <div class="project-form-fields">
+                <div class="repository-field">
+                  <label for="master-project-name">Project name</label>
+                  <input id="master-project-name" type="text" maxlength="200" required placeholder="Shipment Planning">
+                </div>
+                <div class="repository-field">
+                  <label for="master-repository">GitHub repository <span>OPTIONAL</span></label>
+                  <input id="master-repository" type="url" maxlength="500" placeholder="https://github.com/owner/repository">
+                </div>
+                <div class="repository-field">
+                  <label for="master-token">GitHub token <span>PRIVATE REPOSITORIES</span></label>
+                  <input id="master-token" type="password" maxlength="500" autocomplete="new-password" placeholder="Leave blank to keep the saved token">
+                </div>
+                <label class="token-clear"><input id="clear-master-token" type="checkbox"> Clear the saved token</label>
+              </div>
+              <div class="prompt-master-grid">
+                <div class="master-prompt-field"><label for="master-prompt-specification">Requirements analyst prompt</label><textarea id="master-prompt-specification" data-project-prompt="specification" rows="5" spellcheck="false"></textarea></div>
+                <div class="master-prompt-field"><label for="master-prompt-ui_ux">UI/UX designer prompt</label><textarea id="master-prompt-ui_ux" data-project-prompt="ui_ux" rows="5" spellcheck="false"></textarea></div>
+                <div class="master-prompt-field"><label for="master-prompt-frontend">Frontend developer prompt</label><textarea id="master-prompt-frontend" data-project-prompt="frontend" rows="5" spellcheck="false"></textarea></div>
+                <div class="master-prompt-field"><label for="master-prompt-backend">Backend developer prompt</label><textarea id="master-prompt-backend" data-project-prompt="backend" rows="5" spellcheck="false"></textarea></div>
+                <div class="master-prompt-field"><label for="master-prompt-tester">QA engineer prompt</label><textarea id="master-prompt-tester" data-project-prompt="tester" rows="5" spellcheck="false"></textarea></div>
+              </div>
+              <div class="project-form-footer">
+                <span id="project-form-message" class="query-message"></span>
+                <button class="primary-button" type="submit"><span class="button-icon">+</span> Save project</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
         <section class="request-card panel">
           <div class="section-title">
             <div class="step-number">01</div>
@@ -48,6 +104,16 @@
               <h2>Describe what to build</h2>
               <p>Your request starts the specification, design, implementation, and QA workflow.</p>
             </div>
+          </div>
+          <div class="project-selection">
+            <div class="repository-field">
+              <label for="project-select">Project master</label>
+              <select id="project-select">
+                <option value="">Use workspace values / choose a project</option>
+              </select>
+              <p>Select a saved project to use its GitHub connection and agent prompts.</p>
+            </div>
+            <button id="manage-projects-button" class="secondary-button" type="button">Manage projects</button>
           </div>
           <label class="sr-only" for="request-input">Project request</label>
           <textarea id="request-input" class="request-input" rows="4" placeholder="Describe the feature or change you want the team to work on..."></textarea>
@@ -96,7 +162,7 @@
             <div class="step-number">03</div>
             <div>
               <h2>Agent prompts &amp; outputs</h2>
-              <p>Edit each agent's system prompt. Changes are saved in this browser.</p>
+              <p>Edit prompts for this run, or save reusable prompts from Project master data.</p>
             </div>
           </div>
           <div class="agent-grid">

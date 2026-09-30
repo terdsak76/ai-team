@@ -6,8 +6,12 @@ from github_repository import GitHubRepository
 class RepositoryCoordinator:
     """Coordinates read-only repository context shared by task agents."""
 
-    def __init__(self, repository_url: str | None):
-        self._repository = GitHubRepository(repository_url) if repository_url else None
+    def __init__(self, repository_url: str | None, github_token: str | None = None):
+        self._repository = (
+            GitHubRepository(repository_url, token=github_token)
+            if repository_url
+            else None
+        )
         self._context = ""
 
     async def prepare(self) -> str:

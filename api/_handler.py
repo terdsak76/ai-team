@@ -69,6 +69,24 @@ class ApiHandler(BaseHTTPRequestHandler):
         repository_url = payload.get("repository_url", "")
         requirement_code = payload.get("requirement_code", "")
         project_name = payload.get("project_name", "")
+        project_id = payload.get("project_id")
+        github_token = None
+        if project_id is not None:
+            try:
+                if isinstance(project_id, bool):
+                    raise ValueError
+                project = TursoStore().get_project(int(project_id))
+            except (TypeError, ValueError):
+                self.send_json({"error": "The selected project is invalid."}, status=400)
+                return
+            except LookupError as error:
+                self.send_json({"error": str(error)}, status=404)
+                return
+            project_name = project["project_name"]
+            repository_url = project["github_repo"]
+            github_token = project["github_token"]
+            if not isinstance(prompts, dict) or not prompts:
+                prompts = project["system_prompts"]
         if not isinstance(user_request, str) or not user_request.strip():
             self.send_json({"error": "Describe the task before starting the agents."}, status=400)
             return
@@ -114,6 +132,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     repository_url or None,
                     requirement_code.strip(),
                     project_name.strip(),
+                    github_token,
                 )
             )
         except GitHubRepositoryError as error:

@@ -49,11 +49,17 @@ class MuseRunResult:
 class MuseOrchestrator:
     """Runs the development team through a deterministic task DAG."""
 
-    def __init__(self, prompts: dict[str, str] | None = None, repository_url: str | None = None):
+    def __init__(
+        self,
+        prompts: dict[str, str] | None = None,
+        repository_url: str | None = None,
+        github_token: str | None = None,
+    ):
         self.prompts = prompts or {}
-        self.repository = RepositoryCoordinator(repository_url)
+        self.repository = RepositoryCoordinator(repository_url, github_token)
         self.reservations = ReservationManager()
         self._active_reservations: dict[str, Reservation] = {}
+        self._effective_system_prompts: dict[str, str] = {}
 
     def build_dag(self) -> TaskDAG:
         return TaskDAG(
@@ -229,6 +235,7 @@ BACKEND IMPLEMENTATION:
             run_id=run_id,
             agent_name=agent_key,
             output=output,
+            system_prompt=self._effective_system_prompts.get(agent_key, ""),
         )
         return {"output": output, **saved}
 
@@ -237,8 +244,10 @@ BACKEND IMPLEMENTATION:
         instructions = self.prompts.get(key, agent.instructions)
         if not isinstance(instructions, str) or not instructions.strip():
             raise ValueError(f"The {key} agent prompt cannot be empty.")
+        effective_instructions = instructions + repository_instructions
+        self._effective_system_prompts[key] = effective_instructions
         return agent.clone(
-            instructions=instructions + repository_instructions,
+            instructions=effective_instructions,
             tools=[*agent.tools, *repository_tools],
         )
 
@@ -257,9 +266,11 @@ async def run_project(
     repository_url: str | None = None,
     requirement_code: str | None = None,
     project_name: str | None = None,
+    github_token: str | None = None,
 ) -> dict[str, Any]:
     """Compatibility entrypoint used by the web and Vercel handlers."""
-    result = await MuseOrchestrator(prompts, repository_url).run(user_request)
+    orchestrator = MuseOrchestrator(prompts, repository_url, github_token)
+    result = await orchestrator.run(user_request)
     saved = TursoStore().save_run(
         requirement_code=requirement_code.strip() if requirement_code and requirement_code.strip() else f"REQ-{uuid.uuid4().hex[:8].upper()}",
         project_name=project_name.strip() if project_name and project_name.strip() else "Unnamed project",
@@ -271,6 +282,7 @@ async def run_project(
             "backend": result.backend,
             "tester": result.test_report,
         },
+        system_prompts=orchestrator._effective_system_prompts,
     )
     response = result.as_dict()
     response.update(saved)

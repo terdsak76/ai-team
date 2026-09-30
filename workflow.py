@@ -11,9 +11,10 @@ async def run_single_agent(
     ui_design: str = "",
     prompts: dict[str, str] | None = None,
     repository_url: str | None = None,
+    github_token: str | None = None,
 ):
     """Run one agent using a saved or user-edited specification."""
-    return await MuseOrchestrator(prompts, repository_url).run_single_agent(
+    return await MuseOrchestrator(prompts, repository_url, github_token).run_single_agent(
         agent_key=agent_key,
         run_id=run_id,
         specification=specification,

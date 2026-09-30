@@ -3,8 +3,9 @@ const OUTPUT_KEYS = { specification: "specification", ui_ux: "ui_design", fronte
 const STORED_OUTPUT_KEYS = { specification: "specification", ui_ux: "ui_ux", frontend: "frontend", backend: "backend", tester: "tester" };
 const PROMPT_STORAGE_KEY = "agent-team-prompts-v1";
 const REPOSITORY_STORAGE_KEY = "agent-team-repository-url-v1";
+const ACTIVE_PROJECT_STORAGE_KEY = "agent-team-active-project-v1";
 const API_BASE_URL = "/api";
-const state = { prompts: {}, running: false, currentRunId: "" };
+const state = { prompts: {}, projects: [], activeProjectId: "", running: false, currentRunId: "" };
 
 const $ = (selector) => document.querySelector(selector);
 const agentSelector = (key) => `[data-agent="${key}"]`;
@@ -100,6 +101,137 @@ async function loadPrompts() {
   $("#repository-input").value = readStorage(REPOSITORY_STORAGE_KEY);
 }
 
+function setPromptInputs(prompts) {
+  for (const key of AGENT_KEYS) {
+    if (typeof prompts[key] !== "string") continue;
+    state.prompts[key] = prompts[key];
+    $(`#prompt-${key}`).value = prompts[key];
+  }
+}
+
+function projectById(projectId) {
+  return state.projects.find((project) => String(project.id) === String(projectId));
+}
+
+function renderProjectOptions() {
+  const select = $("#project-select");
+  select.innerHTML = '<option value="">Use workspace values / choose a project</option>';
+  for (const project of state.projects) {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = project.project_name;
+    select.appendChild(option);
+  }
+  select.value = state.activeProjectId;
+}
+
+function renderProjectList() {
+  const list = $("#project-list");
+  list.textContent = "";
+  if (!state.projects.length) {
+    list.innerHTML = '<div class="project-list-empty">No projects yet. Create one to save a repository and agent prompts.</div>';
+    return;
+  }
+  for (const project of state.projects) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `project-list-item${String(project.id) === String(state.activeProjectId) ? " selected" : ""}`;
+    button.innerHTML = `<strong></strong><span>${project.github_token_set ? "Private" : "Public"}</span>`;
+    button.querySelector("strong").textContent = project.project_name;
+    button.addEventListener("click", () => selectProject(project.id));
+    list.appendChild(button);
+  }
+}
+
+function populateProjectForm(project = null) {
+  $("#project-id-input").value = project?.id ?? "";
+  $("#project-form-title").textContent = project ? `Edit ${project.project_name}` : "New project";
+  $("#master-project-name").value = project?.project_name ?? "";
+  $("#master-repository").value = project?.github_repo ?? "";
+  $("#master-token").value = "";
+  $("#master-token").placeholder = project?.github_token_set ? "Leave blank to keep the saved token" : "ghp_...";
+  $("#clear-master-token").checked = false;
+  const prompts = project?.system_prompts || state.prompts;
+  for (const key of AGENT_KEYS) $(`[data-project-prompt="${key}"]`).value = prompts[key] || "";
+  $("#project-form-message").textContent = "";
+}
+
+function selectProject(projectId) {
+  const project = projectById(projectId);
+  if (!project) {
+    state.activeProjectId = "";
+    renderProjectOptions();
+    renderProjectList();
+    $("#project-name-input").value = "";
+    $("#repository-input").value = readStorage(REPOSITORY_STORAGE_KEY);
+    $("#project-name-input").readOnly = false;
+    $("#repository-input").readOnly = false;
+    return;
+  }
+  state.activeProjectId = String(project.id);
+  writeStorage(ACTIVE_PROJECT_STORAGE_KEY, state.activeProjectId);
+  $("#project-name-input").value = project.project_name;
+  $("#repository-input").value = project.github_repo;
+  $("#project-name-input").readOnly = true;
+  $("#repository-input").readOnly = true;
+  setPromptInputs(project.system_prompts || {});
+  populateProjectForm(project);
+  renderProjectOptions();
+  renderProjectList();
+}
+
+async function loadProjects() {
+  try {
+    const data = await apiRequest("/projects");
+    state.projects = Array.isArray(data.items) ? data.items : [];
+    renderProjectOptions();
+    renderProjectList();
+    const savedProjectId = readStorage(ACTIVE_PROJECT_STORAGE_KEY);
+    if (projectById(savedProjectId)) selectProject(savedProjectId);
+    else populateProjectForm();
+  } catch (error) {
+    $("#project-list").textContent = error instanceof Error ? error.message : "Unable to load projects.";
+    populateProjectForm();
+  }
+}
+
+function toggleProjectManager() {
+  const manager = $("#project-manager");
+  manager.hidden = !manager.hidden;
+  if (!manager.hidden) manager.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function saveProject(event) {
+  event.preventDefault();
+  const projectId = $("#project-id-input").value;
+  const systemPrompts = {};
+  for (const key of AGENT_KEYS) systemPrompts[key] = $(`[data-project-prompt="${key}"]`).value.trim();
+  const payload = {
+    project_name: $("#master-project-name").value.trim(),
+    github_repo: $("#master-repository").value.trim(),
+    github_token: $("#master-token").value,
+    clear_github_token: $("#clear-master-token").checked,
+    system_prompts: systemPrompts,
+  };
+  const message = $("#project-form-message");
+  message.textContent = "Saving...";
+  try {
+    const data = await apiRequest(projectId ? `/projects/${projectId}` : "/projects", {
+      method: projectId ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const index = state.projects.findIndex((project) => String(project.id) === String(data.id));
+    if (index >= 0) state.projects[index] = data;
+    else state.projects.push(data);
+    renderProjectOptions();
+    selectProject(data.id);
+    message.textContent = "Project saved.";
+  } catch (error) {
+    message.textContent = error instanceof Error ? error.message : "Unable to save the project.";
+  }
+}
+
 function setRunState(running) {
   state.running = running;
   const button = $("#run-button");
@@ -141,7 +273,7 @@ async function runAgents() {
     const data = await apiRequest("/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ request, prompts: state.prompts, repository_url: repositoryUrl, requirement_code: requirementCode, project_name: projectName }),
+      body: JSON.stringify({ request, prompts: state.prompts, repository_url: repositoryUrl, requirement_code: requirementCode, project_name: projectName, project_id: state.activeProjectId ? Number(state.activeProjectId) : undefined }),
     });
     state.currentRunId = data.run_id || "";
     for (const key of AGENT_KEYS) {
@@ -177,6 +309,10 @@ async function loadSavedOutputs() {
     }
     state.currentRunId = item.run_id;
     for (const key of AGENT_KEYS) setOutput(key, item.outputs?.[STORED_OUTPUT_KEYS[key]] ?? "");
+    const savedPrompts = item.prompts || {};
+    if (AGENT_KEYS.some((key) => typeof savedPrompts[key] === "string" && savedPrompts[key].trim())) {
+      setPromptInputs(savedPrompts);
+    }
     $("#requirement-code-input").value = item.requirement_code;
     $("#project-name-input").value = item.project_name;
     $("#query-message").textContent = `Loaded ${item.requirement_code} · ${item.project_name}. Edit the specification below and save it.`;
@@ -234,6 +370,7 @@ async function runSelectedAgent(agentKey, button) {
         ui_design: getOutputText("ui_ux"),
         prompts: state.prompts,
         repository_url: $("#repository-input").value.trim(),
+        project_id: state.activeProjectId ? Number(state.activeProjectId) : undefined,
       }),
     });
     setOutput(agentKey, data.output);
@@ -251,6 +388,11 @@ function initialize() {
   $("#run-button").addEventListener("click", runAgents);
   $("#query-button").addEventListener("click", loadSavedOutputs);
   $("#save-specification-button").addEventListener("click", saveSpecification);
+  $("#projects-nav").addEventListener("click", toggleProjectManager);
+  $("#manage-projects-button").addEventListener("click", toggleProjectManager);
+  $("#new-project-button").addEventListener("click", () => populateProjectForm());
+  $("#project-form").addEventListener("submit", saveProject);
+  $("#project-select").addEventListener("change", (event) => selectProject(event.target.value));
   $("#request-input").addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") runAgents();
   });
@@ -272,7 +414,9 @@ function initialize() {
       }
     });
   });
-  loadPrompts().catch((error) => setError(error instanceof Error ? error.message : "Unable to load agent prompts."));
+  loadPrompts()
+    .then(loadProjects)
+    .catch((error) => setError(error instanceof Error ? error.message : "Unable to load agent prompts."));
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initialize, { once: true });

@@ -37,6 +37,8 @@ class handler(ApiHandler):
         ui_design = payload.get("ui_design", "")
         prompts = payload.get("prompts", {})
         repository_url = payload.get("repository_url", "")
+        project_id = payload.get("project_id")
+        github_token = None
         if agent_key not in {"ui_ux", "frontend", "backend"}:
             self.send_json({"error": "Choose ui_ux, frontend, or backend."}, status=400)
             return
@@ -54,6 +56,14 @@ class handler(ApiHandler):
             return
         repository_url = repository_url.strip()
         try:
+            if project_id is not None:
+                if isinstance(project_id, bool):
+                    raise ValueError("The selected project is invalid.")
+                project = TursoStore().get_project(int(project_id))
+                if not isinstance(prompts, dict) or not prompts:
+                    prompts = project["system_prompts"]
+                repository_url = project["github_repo"]
+                github_token = project["github_token"]
             if repository_url:
                 parse_github_repository(repository_url)
             store = TursoStore()
@@ -79,6 +89,7 @@ class handler(ApiHandler):
                     ui_design=ui_design,
                     prompts=prompts,
                     repository_url=repository_url or None,
+                    github_token=github_token,
                 )
             )
         except (ValueError, GitHubRepositoryError) as error:
