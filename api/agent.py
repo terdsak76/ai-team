@@ -90,6 +90,9 @@ class handler(ApiHandler):
                     prompts=prompts,
                     repository_url=repository_url or None,
                     github_token=github_token,
+                    project_id=int(project_id) if project_id is not None else None,
+                    database_connections=payload.get("database_connections"),
+                    force_refresh_context=payload.get("force_refresh_context") is True,
                 )
             )
         except (ValueError, GitHubRepositoryError) as error:
@@ -105,4 +108,6 @@ class handler(ApiHandler):
             traceback.print_exc()
             self.send_json({"error": "The selected agent run failed. Check the function logs for details."}, status=502)
             return
-        self.send_json({"key": value for key, value in result.items()})
+        from api._handler import to_json_value
+
+        self.send_json({key: to_json_value(value) for key, value in result.items()})

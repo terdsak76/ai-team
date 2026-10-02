@@ -9,7 +9,11 @@ from urllib.parse import parse_qs, urlparse
 
 from github_repository import GitHubRepositoryError, parse_github_repository
 from turso_store import TursoConfigurationError, TursoStore
+from muse.database_context import DatabaseContextError, validate_database_connections
 from workflow import get_default_prompts, run_project, run_single_agent
+from api._progress import ProgressStreamMixin
+from api.repo_context import load_snapshot
+from api.repo_context import handler as RepoContextHandler
 
 
 HOST = "127.0.0.1"
@@ -30,13 +34,26 @@ def public_project(project: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in project.items() if key != "github_token"}
 
 
-class AgentTeamHandler(BaseHTTPRequestHandler):
+class AgentTeamHandler(ProgressStreamMixin, BaseHTTPRequestHandler):
     server_version = "AgentTeamUI/1.0"
 
     def do_GET(self):
         parsed_path = urlparse(self.path)
         if parsed_path.path == "/api/prompts":
             self._send_json({"prompts": get_default_prompts()})
+            return
+        if parsed_path.path == "/api/repo-context":
+            try:
+                self._send_json(load_snapshot(parsed_path.query))
+            except ValueError as error:
+                self._send_json({"error": str(error)}, status=400)
+            except LookupError as error:
+                self._send_json({"error": str(error)}, status=404)
+            except TursoConfigurationError as error:
+                self._send_json({"error": str(error)}, status=503)
+            except Exception:
+                traceback.print_exc()
+                self._send_json({"error": "The repository snapshot could not be loaded."}, status=502)
             return
         if parsed_path.path == "/api/projects":
             try:
@@ -90,6 +107,10 @@ class AgentTeamHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_POST(self):
+        if urlparse(self.path).path == "/api/repo-context":
+            # Share validation and progress transport with the serverless route.
+            RepoContextHandler.do_POST(self)
+            return
         if urlparse(self.path).path == "/api/projects":
             self._save_project()
             return
@@ -174,6 +195,8 @@ class AgentTeamHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(error)}, status=400)
                 return
 
+        if payload.get("stream") is True:
+            self.start_progress_stream()
         try:
             future = asyncio.run_coroutine_threadsafe(
                 run_project(
@@ -184,10 +207,16 @@ class AgentTeamHandler(BaseHTTPRequestHandler):
                     project_name.strip(),
                     github_token,
                     project_id=project_id,
+                    database_connections=payload.get("database_connections"),
+                    on_event=self.send_progress if payload.get("stream") is True else None,
+                    force_refresh_context=payload.get("force_refresh_context") is True,
                 ),
                 self.server.event_loop,
             )
             result = future.result()
+        except DatabaseContextError as error:
+            self._send_json({"error": str(error)}, status=400)
+            return
         except GitHubRepositoryError as error:
             self._send_json(
                 {"error": f"GitHub repository access failed: {error}"},
@@ -284,6 +313,9 @@ class AgentTeamHandler(BaseHTTPRequestHandler):
                     prompts=prompts,
                     repository_url=repository_url or None,
                     github_token=github_token,
+                    project_id=int(project_id) if project_id is not None else None,
+                    database_connections=payload.get("database_connections"),
+                    force_refresh_context=payload.get("force_refresh_context") is True,
                 ),
                 self.server.event_loop,
             )
@@ -403,6 +435,8 @@ class AgentTeamHandler(BaseHTTPRequestHandler):
             "project_context": project_context.strip(),
             "clear_github_token": bool(payload.get("clear_github_token", False)),
             "system_prompts": prompts,
+            "database_connections": validate_database_connections(payload["database_connections"])
+            if "database_connections" in payload else None,
         }
 
     def do_PATCH(self):
@@ -448,6 +482,8 @@ class AgentTeamHandler(BaseHTTPRequestHandler):
         self._send_json(saved)
 
     def _send_json(self, payload: dict[str, Any], status: int = 200):
+        if self.send_progress_result(payload, status):
+            return
         content = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")

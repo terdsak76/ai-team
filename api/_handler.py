@@ -6,6 +6,8 @@ from typing import Any
 
 from github_repository import GitHubRepositoryError, parse_github_repository
 from turso_store import TursoConfigurationError, TursoStore
+from muse.database_context import DatabaseContextError
+from api._progress import ProgressStreamMixin
 
 MAX_REQUEST_BYTES = 150_000
 PROMPT_KEYS = {"specification", "ui_ux", "frontend", "backend", "tester"}
@@ -17,12 +19,14 @@ def to_json_value(value: Any) -> Any:
     return value
 
 
-class ApiHandler(BaseHTTPRequestHandler):
+class ApiHandler(ProgressStreamMixin, BaseHTTPRequestHandler):
     allow_get = False
     allow_post = False
     allow_patch = False
 
     def send_json(self, payload: dict[str, Any], status: int = 200):
+        if self.send_progress_result(payload, status):
+            return
         content = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -125,6 +129,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._handle_configuration_error(error)
             return
 
+        if payload.get("stream") is True:
+            self.start_progress_stream()
         try:
             result = asyncio.run(
                 run_project(
@@ -135,8 +141,14 @@ class ApiHandler(BaseHTTPRequestHandler):
                     project_name.strip(),
                     github_token,
                     project_id=project_id,
+                    database_connections=payload.get("database_connections"),
+                    on_event=self.send_progress if payload.get("stream") is True else None,
+                    force_refresh_context=payload.get("force_refresh_context") is True,
                 )
             )
+        except DatabaseContextError as error:
+            self.send_json({"error": str(error)}, status=400)
+            return
         except GitHubRepositoryError as error:
             self.send_json({"error": f"GitHub repository access failed: {error}"}, status=502)
             return

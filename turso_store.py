@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import uuid
@@ -10,6 +11,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from dotenv import load_dotenv
+from muse.repository_context import RepositoryContext
+from muse.database_context import validate_database_connections
 
 load_dotenv()
 
@@ -86,6 +89,8 @@ class TursoStore:
             conn.execute(
                 "ALTER TABLE project ADD COLUMN project_context TEXT NOT NULL DEFAULT ''"
             )
+        if "database_connections" not in {row[1] for row in project_columns}:
+            conn.execute("ALTER TABLE project ADD COLUMN database_connections TEXT NOT NULL DEFAULT '[]'")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS project_memory (
@@ -141,6 +146,69 @@ class TursoStore:
             "CREATE INDEX IF NOT EXISTS idx_prompt_output_run_id "
             "ON prompt_output(run_id)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS repo_map_snapshot (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER,
+                repository TEXT NOT NULL,
+                revision TEXT NOT NULL DEFAULT '',
+                context_json TEXT NOT NULL,
+                artifact_count INTEGER NOT NULL DEFAULT 0,
+                is_current INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repo_map_snapshot_repository "
+            "ON repo_map_snapshot(repository, revision, is_current)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repo_map_snapshot_project "
+            "ON repo_map_snapshot(project_id, is_current, updated_at)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS repo_map_artifact (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_id INTEGER NOT NULL,
+                artifact_path TEXT NOT NULL,
+                artifact_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                content_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(snapshot_id, artifact_path)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repo_map_artifact_snapshot "
+            "ON repo_map_artifact(snapshot_id, artifact_path)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS repo_relationship (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_id INTEGER NOT NULL,
+                source_path TEXT NOT NULL,
+                source_name TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                target_path TEXT NOT NULL DEFAULT '',
+                target_name TEXT NOT NULL,
+                target_kind TEXT NOT NULL,
+                relation_type TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0.0,
+                evidence TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_repo_relationship_snapshot "
+            "ON repo_relationship(snapshot_id, relation_type)"
+        )
 
     @classmethod
     def _project_from_row(cls, row: dict[str, Any]) -> dict[str, Any]:
@@ -155,6 +223,7 @@ class TursoStore:
             "github_token": row.get("github_token", "") or "",
             "github_token_set": bool(row.get("github_token", "")),
             "project_context": row.get("project_context", "") or "",
+            "database_connections": json.loads(row.get("database_connections") or "[]"),
             "system_prompts": prompts,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -184,7 +253,7 @@ class TursoStore:
     def list_projects(self) -> list[dict[str, Any]]:
         def query(conn):
             cursor = conn.execute(
-                "SELECT id, project_name, github_repo, github_token, project_context, "
+                "SELECT id, project_name, github_repo, github_token, project_context, database_connections, "
                 "system_prompt_specification, system_prompt_ui_ux, "
                 "system_prompt_frontend, system_prompt_backend, system_prompt_tester, "
                 "created_at, updated_at FROM project ORDER BY project_name COLLATE NOCASE"
@@ -201,7 +270,7 @@ class TursoStore:
     def get_project(self, project_id: int) -> dict[str, Any]:
         def query(conn):
             cursor = conn.execute(
-                "SELECT id, project_name, github_repo, github_token, project_context, "
+                "SELECT id, project_name, github_repo, github_token, project_context, database_connections, "
                 "system_prompt_specification, system_prompt_ui_ux, "
                 "system_prompt_frontend, system_prompt_backend, system_prompt_tester, "
                 "created_at, updated_at FROM project WHERE id = ?",
@@ -222,8 +291,10 @@ class TursoStore:
         github_token: str = "",
         project_context: str = "",
         system_prompts: dict[str, str],
+        database_connections: list[dict] | None = None,
     ) -> dict[str, Any]:
         timestamp = self._now()
+        connections = validate_database_connections(database_connections)
 
         def insert(conn):
             cursor = conn.execute(
@@ -244,7 +315,10 @@ class TursoStore:
                     timestamp=timestamp,
                 ),
             )
-            return int(cursor.lastrowid)
+            project_id = int(cursor.lastrowid)
+            conn.execute("UPDATE project SET database_connections = ? WHERE id = ?",
+                         (json.dumps(connections), project_id))
+            return project_id
 
         project_id = self._with_connection(insert)
         return self.get_project(project_id)
@@ -259,8 +333,10 @@ class TursoStore:
         project_context: str = "",
         clear_github_token: bool = False,
         system_prompts: dict[str, str],
+        database_connections: list[dict] | None = None,
     ) -> dict[str, Any]:
         timestamp = self._now()
+        connections = validate_database_connections(database_connections) if database_connections is not None else None
 
         def update(conn):
             current_cursor = conn.execute(
@@ -293,6 +369,9 @@ class TursoStore:
             )
             if cursor.rowcount == 0:
                 raise LookupError("The selected project was not found.")
+            if connections is not None:
+                conn.execute("UPDATE project SET database_connections = ? WHERE id = ?",
+                             (json.dumps(connections), project_id))
 
         self._with_connection(update)
         return self.get_project(project_id)
@@ -407,6 +486,159 @@ class TursoStore:
                     ranked.append((score, memory["updated_at"], memory))
             ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
             return [item[2] for item in ranked[: max(1, min(20, limit))]]
+
+        return self._with_connection(query)
+
+    def save_repository_context(
+        self,
+        *,
+        context: RepositoryContext,
+        project_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Persist a versioned `.repo-map` snapshot and its relationship graph."""
+
+        if not context.repository:
+            raise ValueError("A repository name is required to persist repository context.")
+        artifacts = context.artifacts()
+        timestamp = self._now()
+
+        def insert(conn):
+            if project_id is None:
+                conn.execute(
+                    "UPDATE repo_map_snapshot SET is_current = 0, updated_at = ? "
+                    "WHERE project_id IS NULL AND repository = ? AND is_current = 1",
+                    (timestamp, context.repository),
+                )
+            else:
+                conn.execute(
+                    "UPDATE repo_map_snapshot SET is_current = 0, updated_at = ? "
+                    "WHERE project_id = ? AND repository = ? AND is_current = 1",
+                    (timestamp, project_id, context.repository),
+                )
+            cursor = conn.execute(
+                """
+                INSERT INTO repo_map_snapshot (
+                    project_id, repository, revision, context_json, artifact_count,
+                    is_current, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    project_id,
+                    context.repository,
+                    context.revision,
+                    self._serialize(context.as_dict()),
+                    len(artifacts),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            snapshot_id = int(cursor.lastrowid)
+            for artifact_path, content in artifacts.items():
+                if artifact_path.endswith(".md"):
+                    artifact_type = "markdown"
+                elif artifact_path.endswith(".patch"):
+                    artifact_type = "patch"
+                else:
+                    artifact_type = "json"
+                conn.execute(
+                    """
+                    INSERT INTO repo_map_artifact (
+                        snapshot_id, artifact_path, artifact_type, content,
+                        content_sha256, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot_id,
+                        artifact_path,
+                        artifact_type,
+                        content,
+                        hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                        timestamp,
+                    ),
+                )
+            for relationship in context.relationships:
+                conn.execute(
+                    """
+                    INSERT INTO repo_relationship (
+                        snapshot_id, source_path, source_name, source_kind,
+                        target_path, target_name, target_kind, relation_type,
+                        confidence, evidence, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot_id,
+                        relationship.source_path,
+                        relationship.source_name,
+                        relationship.source_kind,
+                        relationship.target_path,
+                        relationship.target_name,
+                        relationship.target_kind,
+                        relationship.relation_type,
+                        max(0.0, min(1.0, float(relationship.confidence))),
+                        relationship.evidence,
+                        timestamp,
+                    ),
+                )
+            return snapshot_id
+
+        snapshot_id = self._with_connection(insert)
+        return {
+            "snapshot_id": snapshot_id,
+            "project_id": project_id,
+            "repository": context.repository,
+            "revision": context.revision,
+            "artifact_count": len(artifacts),
+            "relationship_count": len(context.relationships),
+            "created_at": timestamp,
+        }
+
+    def get_current_repository_context(self, *, repository: str, project_id: int | None = None) -> dict | None:
+        """Read the current snapshot metadata/index only, not all artifact bodies."""
+        def query(conn):
+            scope = "project_id IS NULL" if project_id is None else "project_id = ?"
+            params = (repository,) if project_id is None else (repository, project_id)
+            rows = self._rows(conn.execute(
+                "SELECT id, project_id, repository, revision, context_json, artifact_count, created_at "
+                f"FROM repo_map_snapshot WHERE repository = ? AND {scope} AND is_current = 1 "
+                "ORDER BY id DESC LIMIT 1", params,
+            ))
+            return rows[0] if rows else None
+        return self._with_connection(query)
+
+    def get_repository_snapshot(self, snapshot_id: int) -> dict[str, Any]:
+        """Load one persisted repo-map snapshot, including artifacts and edges."""
+
+        def query(conn):
+            snapshot_rows = self._rows(
+                conn.execute(
+                    "SELECT id, project_id, repository, revision, context_json, "
+                    "artifact_count, is_current, created_at, updated_at "
+                    "FROM repo_map_snapshot WHERE id = ?",
+                    (snapshot_id,),
+                )
+            )
+            if not snapshot_rows:
+                raise LookupError("The repository snapshot was not found.")
+            snapshot = snapshot_rows[0]
+            artifacts = self._rows(
+                conn.execute(
+                    "SELECT artifact_path, artifact_type, content, content_sha256, created_at "
+                    "FROM repo_map_artifact WHERE snapshot_id = ? ORDER BY artifact_path",
+                    (snapshot_id,),
+                )
+            )
+            relationships = self._rows(
+                conn.execute(
+                    "SELECT source_path, source_name, source_kind, target_path, target_name, "
+                    "target_kind, relation_type, confidence, evidence, created_at "
+                    "FROM repo_relationship WHERE snapshot_id = ? "
+                    "ORDER BY source_path, source_name, target_name",
+                    (snapshot_id,),
+                )
+            )
+            snapshot["artifacts"] = artifacts
+            snapshot["relationships"] = relationships
+            return snapshot
 
         return self._with_connection(query)
 
@@ -604,7 +836,16 @@ class TursoStore:
             )
             current_rows = self._rows(cursor)
             if not current_rows:
-                raise LookupError("No saved output was found for that agent and run.")
+                if agent_name != "repo_context":
+                    raise LookupError("No saved output was found for that agent and run.")
+                # Older runs predate the context agent. Attach its first version
+                # using existing run metadata, never create an orphaned run.
+                current_rows = self._rows(conn.execute(
+                    "SELECT requirement_code, project_name, request_text, system_prompt, 0 AS version "
+                    "FROM prompt_output WHERE run_id = ? AND is_current = 1 LIMIT 1", (run_id,),
+                ))
+                if not current_rows:
+                    raise LookupError("The saved run was not found.")
             current = current_rows[0]
             next_version = int(current["version"]) + 1
             conn.execute(

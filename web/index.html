@@ -42,7 +42,7 @@
             <h1>Build with your agent team</h1>
             <p>Shape the instructions, start a run, and review each agent's output in one place.</p>
           </div>
-          <div class="team-badge"><span>*</span> 5 agents</div>
+          <div class="team-badge"><span>*</span> 6 agents</div>
         </section>
 
         <section id="project-manager" class="project-manager panel" hidden>
@@ -82,6 +82,27 @@
                 </div>
                 <label class="token-clear"><input id="clear-master-token" type="checkbox"> Clear the saved token</label>
                 <div class="repository-field project-context-field">
+                  <h3>Database context</h3>
+                  <p>Enable either source or both. Only schema metadata is supplied to agents. Passwords and tokens are read from server environment variables.</p>
+                  <label class="token-clear"><input id="master-server-enabled" type="checkbox"> Read a server database</label>
+                  <div id="master-server-fields" class="project-form-fields" hidden>
+                    <div class="repository-field"><label for="master-db-name">Connection name</label><input id="master-db-name" value="server" maxlength="80"></div>
+                    <div class="repository-field"><label for="master-db-type">Database type</label><select id="master-db-type"><option value="postgresql">PostgreSQL</option><option value="mysql">MySQL</option><option value="sqlserver">SQL Server</option></select></div>
+                    <div class="repository-field"><label for="master-db-host">Server / host</label><input id="master-db-host" maxlength="500" placeholder="database.example.com"></div>
+                    <div class="repository-field"><label for="master-db-port">Port (optional)</label><input id="master-db-port" type="number" min="1" max="65535" placeholder="Database default"></div>
+                    <div class="repository-field"><label for="master-db-database">Database name</label><input id="master-db-database" maxlength="500"></div>
+                    <div class="repository-field"><label for="master-db-user">Username</label><input id="master-db-user" maxlength="500" autocomplete="off"></div>
+                    <div class="repository-field"><label for="master-db-schema">Schema (optional)</label><input id="master-db-schema" maxlength="500" placeholder="public / dbo"></div>
+                    <div class="repository-field"><label for="master-db-password-env">Password environment variable</label><input id="master-db-password-env" maxlength="500" placeholder="APP_DB_PASSWORD"></div>
+                  </div>
+                  <label class="token-clear"><input id="master-turso-enabled" type="checkbox"> Read a Turso database</label>
+                  <div id="master-turso-fields" class="project-form-fields" hidden>
+                    <div class="repository-field"><label for="master-turso-name">Connection name</label><input id="master-turso-name" value="turso" maxlength="80"></div>
+                    <div class="repository-field"><label for="master-turso-url">Turso URL</label><input id="master-turso-url" maxlength="500" placeholder="libsql://your-database.turso.io"></div>
+                    <div class="repository-field"><label for="master-turso-token-env">Token environment variable</label><input id="master-turso-token-env" maxlength="500" placeholder="APP_TURSO_TOKEN"></div>
+                  </div>
+                </div>
+                <div class="repository-field project-context-field">
                   <label for="master-project-context">Project context summary</label>
                   <textarea id="master-project-context" rows="5" maxlength="20000" placeholder="Architecture, technology conventions, important decisions, and durable constraints..."></textarea>
                   <p>This compact summary is supplied to the Specification Agent for new tasks.</p>
@@ -116,7 +137,7 @@
               <select id="project-select">
                 <option value="">Use workspace values / choose a project</option>
               </select>
-              <p>Select a saved project to use its GitHub connection and agent prompts.</p>
+              <p>Select a saved project to use its GitHub connection, database context, and agent prompts.</p>
             </div>
             <button id="manage-projects-button" class="secondary-button" type="button">Manage projects</button>
           </div>
@@ -170,6 +191,30 @@
               <p>Edit prompts for this run, or save reusable prompts from Project master data.</p>
             </div>
           </div>
+          <article class="agent-card panel repo-context-panel" data-agent="repo_context" aria-labelledby="repo-context-title">
+            <div class="agent-header">
+              <div class="agent-avatar analyst">R</div>
+              <div class="agent-identity"><h3 id="repo-context-title">Repo Context</h3><span>READ-ONLY ARCHITECTURE AGENT</span></div>
+              <span class="agent-state" data-state role="status" aria-live="polite">READY</span>
+            </div>
+            <p id="repo-context-source">Repository and database architecture</p>
+            <p id="repo-context-counts" role="status"></p>
+            <div class="repo-artifact-controls"><button id="repo-context-refresh" class="secondary-button" type="button">Refresh Repo Context</button><span id="repo-context-cache" role="status">Unchanged project context is reused automatically.</span></div>
+            <p id="repo-context-coverage" class="query-message"></p>
+            <details class="repo-context-policy"><summary>How this agent works</summary><p>Indexes source and catalog metadata, creates an evidence-grounded LLM architecture summary, then saves .repo-map artifacts and extracted relationships in Turso. Development agents receive that context and can make targeted source reads. Database credentials and row data are not provided to agents.</p></details>
+            <div class="output-heading"><span>Semantic architecture summary</span></div>
+            <pre id="repo-context-summary" class="output">Start a run with a repository or database configured to generate architecture context.</pre>
+            <details class="repo-context-artifacts">
+              <summary>Generated .repo-map artifacts</summary>
+              <div class="repo-artifact-controls"><label for="repo-artifact-select">Artifact</label><select id="repo-artifact-select" disabled></select><button id="repo-artifact-download" class="copy-button" type="button" disabled>Download</button></div>
+              <pre id="repo-artifact-content" class="output">No generated artifacts yet.</pre>
+            </details>
+            <details class="repo-context-relationships">
+              <summary>ORM and database relationship graph</summary>
+              <p id="repo-relationships-message">No relationships indexed yet.</p>
+              <div class="repo-relationship-scroll"><table class="repo-relationship-table"><thead><tr><th scope="col">Source</th><th scope="col">Relationship</th><th scope="col">Target</th><th scope="col">Confidence</th><th scope="col">Evidence</th></tr></thead><tbody id="repo-relationships-body"></tbody></table></div>
+            </details>
+          </article>
           <div class="agent-grid">
             <article class="agent-card panel" data-agent="specification">
               <div class="agent-header">

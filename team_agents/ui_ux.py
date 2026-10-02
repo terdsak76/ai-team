@@ -10,7 +10,7 @@ from config import get_model
 ui_ux_agent = Agent(
     name="UI UX Designer",
 
-    model=get_model("openai/gpt-5.6-sol"),
+    model=get_model("openai/gpt-6.1-sol"),
 
     model_settings={
         "reasoning": {
@@ -114,3 +114,4 @@ EXISTING REPOSITORY CONTEXT:
 
 Return only the UI/UX design specification. Do not implement code.
 """
+

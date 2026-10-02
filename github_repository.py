@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 MAX_FILE_BYTES = 40_000
 MAX_LIST_RESULTS = 150
+MAX_INDEX_FILES = 120
 IGNORED_PATH_PARTS = {
     ".git",
     ".next",
@@ -79,7 +80,23 @@ class GitHubRepository:
         self.token = token or os.getenv("GITHUB_TOKEN")
         self._metadata = None
         self._tree = None
+        self._revision = None
         self._lock = threading.Lock()
+
+    @property
+    def repository_name(self) -> str:
+        return f"{self.owner}/{self.repository}"
+
+    @property
+    def default_branch(self) -> str:
+        if self._metadata is None:
+            self._metadata = self._request_json(
+                f"/repos/{quote(self.owner)}/{quote(self.repository)}"
+            )
+        branch = self._metadata.get("default_branch")
+        if not isinstance(branch, str) or not branch:
+            raise GitHubRepositoryError("GitHub did not report a default branch.")
+        return branch
 
     def _request_json(self, endpoint: str) -> dict:
         headers = {
@@ -113,6 +130,23 @@ class GitHubRepository:
         except (URLError, TimeoutError, json.JSONDecodeError) as error:
             raise GitHubRepositoryError(f"Could not read the repository from GitHub: {error}") from error
 
+    def resolve_revision(self, *, refresh: bool = False) -> str:
+        """Resolve and pin the default branch to an immutable commit for this run."""
+        if refresh:
+            self._metadata = None
+            self._tree = None
+            self._revision = None
+        if self._revision is None:
+            commit = self._request_json(
+                f"/repos/{quote(self.owner)}/{quote(self.repository)}/commits/"
+                f"{quote(self.default_branch, safe='')}"
+            )
+            sha = commit.get("sha")
+            if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+                raise GitHubRepositoryError("GitHub returned an invalid commit revision.")
+            self._revision = sha.lower()
+        return self._revision
+
     def _get_tree(self) -> list[dict]:
         with self._lock:
             if self._tree is None:
@@ -120,9 +154,7 @@ class GitHubRepository:
                     self._metadata = self._request_json(
                         f"/repos/{quote(self.owner)}/{quote(self.repository)}"
                     )
-                branch = self._metadata.get("default_branch")
-                if not isinstance(branch, str) or not branch:
-                    raise GitHubRepositoryError("GitHub did not report a default branch.")
+                branch = self.resolve_revision()
                 encoded_branch = quote(branch, safe="")
                 tree = self._request_json(
                     f"/repos/{quote(self.owner)}/{quote(self.repository)}"
@@ -138,6 +170,25 @@ class GitHubRepository:
                     raise GitHubRepositoryError("GitHub returned an invalid repository file listing.")
                 self._tree = entries
             return self._tree
+
+    def indexable_file_paths(self, limit: int = MAX_INDEX_FILES) -> list[str]:
+        """Return safe source paths that the repository indexer understands."""
+
+        from muse.repository_context import language_for_path
+
+        paths = []
+        for entry in self._get_tree():
+            path = entry.get("path")
+            if (
+                entry.get("type") == "blob"
+                and isinstance(path, str)
+                and not is_sensitive_path(path)
+                and language_for_path(path) is not None
+            ):
+                paths.append(path)
+                if len(paths) >= max(1, min(limit, MAX_INDEX_FILES)):
+                    break
+        return paths
 
     def list_files(self, path: str = "", query: str = "") -> str:
         if not isinstance(path, str) or not isinstance(query, str):
@@ -170,6 +221,49 @@ class GitHubRepository:
             return "No matching files found."
         suffix = "\nResults limited to the first 150 files." if len(matches) == MAX_LIST_RESULTS else ""
         return "\n".join(matches) + suffix
+
+    def compare_refs(self, base_ref: str, head_ref: str, max_chars: int = 8_000) -> str:
+        """Return a bounded patch summary for two GitHub refs."""
+
+        if not isinstance(base_ref, str) or not isinstance(head_ref, str):
+            raise GitHubRepositoryError("Base and head refs must be text.")
+        base_ref = base_ref.strip()
+        head_ref = head_ref.strip()
+        if (
+            not base_ref
+            or not head_ref
+            or len(base_ref) > 200
+            or len(head_ref) > 200
+            or any(value.startswith("/") or ".." in value for value in (base_ref, head_ref))
+        ):
+            raise GitHubRepositoryError("Base and head refs are invalid.")
+
+        comparison = self._request_json(
+            f"/repos/{quote(self.owner)}/{quote(self.repository)}/compare/"
+            f"{quote(base_ref, safe='')}...{quote(head_ref, safe='')}"
+        )
+        files = comparison.get("files")
+        if not isinstance(files, list):
+            raise GitHubRepositoryError("GitHub returned an invalid repository diff.")
+
+        lines = [f"Diff: {base_ref}...{head_ref}"]
+        for file in files:
+            if not isinstance(file, dict) or not isinstance(file.get("filename"), str):
+                continue
+            filename = file["filename"]
+            status = file.get("status", "modified")
+            additions = file.get("additions", 0)
+            deletions = file.get("deletions", 0)
+            lines.append(f"\n## {filename} ({status}, +{additions}/-{deletions})")
+            patch = file.get("patch")
+            if isinstance(patch, str) and patch:
+                lines.append(patch)
+            else:
+                lines.append("[No textual patch available]")
+            if len("\n".join(lines)) >= max_chars:
+                break
+        rendered = "\n".join(lines)
+        return rendered[:max(1_000, max_chars)]
 
     def read_file(self, path: str) -> str:
         if not isinstance(path, str) or not path or path.startswith("/"):

@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from agents import Agent, Runner
 
@@ -15,6 +15,7 @@ from team_agents.frontend import frontend_agent
 from team_agents.specification import specification_agent
 from team_agents.tester import tester_agent
 from team_agents.ui_ux import build_ui_prompt, ui_ux_agent
+from team_agents.repo_context import repo_context_agent
 from turso_store import TursoStore
 
 
@@ -35,6 +36,8 @@ class MuseRunResult:
     backend: Any
     test_report: Any
     conflict_forecast: ConflictForecast
+    repository_snapshot: dict[str, Any] | None = None
+    repo_context: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -43,6 +46,8 @@ class MuseRunResult:
             "frontend": self.frontend,
             "backend": self.backend,
             "test_report": self.test_report,
+            "repository_snapshot": self.repository_snapshot,
+            "repo_context": self.repo_context,
         }
 
 
@@ -56,11 +61,14 @@ class MuseOrchestrator:
         github_token: str | None = None,
         project_context: str = "",
         project_memories: list[dict[str, Any]] | None = None,
+        project_id: int | None = None,
+        database_connections: list[dict] | None = None,
     ):
         self.prompts = prompts or {}
-        self.repository = RepositoryCoordinator(repository_url, github_token)
+        self.repository = RepositoryCoordinator(repository_url, github_token, database_connections)
         self.project_context = project_context.strip()
         self.project_memories = project_memories or []
+        self.project_id = project_id
         self.reservations = ReservationManager()
         self._active_reservations: dict[str, Reservation] = {}
         self._effective_system_prompts: dict[str, str] = {}
@@ -99,8 +107,74 @@ class MuseOrchestrator:
     def forecast_conflicts(self, dag: TaskDAG | None = None) -> ConflictForecast:
         return self.reservations.forecast(list((dag or self.build_dag()).tasks))
 
-    async def run(self, user_request: str) -> MuseRunResult:
-        repository_instructions = await self.repository.prepare()
+    def _context_report(self, snapshot: dict | None, *, reused: bool) -> dict:
+        context = self.repository.context_package()
+        return {
+            "status": "ready", "summary": context.architecture_summary,
+            "repository": context.repository, "revision": context.revision,
+            "file_count": len(context.files), "symbol_count": len(context.symbols),
+            "database_count": len(context.databases), "relationship_count": len(context.relationships),
+            "truncated": context.truncated,
+            "artifacts": [{"artifact_path": path} for path in context.artifacts()],
+            "relationships": [edge.as_dict() for edge in context.relationships],
+            "snapshot": snapshot, "cache": self.repository.cache_details(snapshot, reused=reused),
+        }
+
+    async def prepare_repo_context(self, on_event: Callable[[dict], None] | None = None,
+                                   *, force_refresh: bool = False) -> dict:
+        """Reuse verified context, or rebuild before any development agent runs."""
+        def emit(status: str, **details) -> None:
+            if on_event:
+                on_event({"type": "repo_context", "status": status, **details})
+
+        emit("checking")
+        try:
+            policy = repo_context_agent.instructions + "\nModel: " + str(
+                getattr(repo_context_agent.model, "model", type(repo_context_agent.model).__name__))
+            snapshot = await self.repository.restore_cached_context(
+                project_id=self.project_id, analysis_policy=policy, force_refresh=force_refresh)
+            if snapshot:
+                report = self._context_report(snapshot, reused=True)
+                self._effective_system_prompts["repo_context"] = (
+                    repo_context_agent.instructions + self.repository.instructions())
+                emit("reused", data=report)
+                return report
+
+            emit("indexing", reason=self.repository.cache_reason)
+            instructions = await self.repository.prepare()
+            context = self.repository.context_package()
+            if not context.repository:
+                report = {"status": "skipped", "summary": "No repository or database source configured.",
+                          "artifacts": [], "relationships": [], "snapshot": None}
+                emit("skipped", data=report)
+                return report
+
+            emit("summarizing", file_count=len(context.files), symbol_count=len(context.symbols))
+            agent = repo_context_agent.clone(
+                instructions=repo_context_agent.instructions + instructions,
+                tools=[*repo_context_agent.tools, *self.repository.tools()],
+            )
+            self._effective_system_prompts["repo_context"] = agent.instructions
+            result = await Runner.run(agent, "Summarize the existing architecture from this indexed context. "
+                                      "Explain coverage limitations even if no source files were indexed.")
+            summary = result.final_output
+            if not isinstance(summary, str) or not summary.strip():
+                raise ValueError("The Repo Context agent returned an empty architecture summary.")
+            self.repository.set_architecture_summary(summary.strip()[:6_000])
+            context = self.repository.context_package()
+            emit("saving")
+            snapshot = await asyncio.to_thread(self.repository.persist_context, project_id=self.project_id)
+            report = self._context_report(snapshot, reused=False)
+            emit("ready", data=report)
+            return report
+        except Exception:
+            emit("error")
+            raise
+
+    async def run(self, user_request: str, on_event: Callable[[dict], None] | None = None,
+                  *, force_refresh_context: bool = False) -> MuseRunResult:
+        repo_context = await self.prepare_repo_context(on_event, force_refresh=force_refresh_context)
+        repository_instructions = self.repository.instructions()
         repository_tools = self.repository.tools()
         dag = self.build_dag()
         conflict_forecast = self.forecast_conflicts(dag)
@@ -110,6 +184,8 @@ class MuseOrchestrator:
         async def execute(task: MuseTask) -> None:
             try:
                 self.reservations.reserve(task, self._active_reservations)
+                if on_event:
+                    on_event({"type": "agent", "agent": task.task_id, "status": "running"})
                 outputs[task.task_id] = await self._execute_task(
                     task.task_id,
                     user_request,
@@ -118,8 +194,13 @@ class MuseOrchestrator:
                     repository_tools,
                 )
                 await queue.complete(task.task_id, outputs[task.task_id])
+                if on_event:
+                    on_event({"type": "agent", "agent": task.task_id, "status": "complete",
+                              "output": outputs[task.task_id]})
             except BaseException as error:
                 await queue.fail(task.task_id, error)
+                if on_event:
+                    on_event({"type": "agent", "agent": task.task_id, "status": "error"})
                 raise
             finally:
                 self.reservations.release(task.task_id, self._active_reservations)
@@ -144,6 +225,8 @@ class MuseOrchestrator:
             backend=outputs["backend"],
             test_report=outputs["tester"],
             conflict_forecast=conflict_forecast,
+            repository_snapshot=repo_context["snapshot"],
+            repo_context=repo_context,
         )
 
     async def _execute_task(
@@ -246,12 +329,14 @@ BACKEND IMPLEMENTATION:
         run_id: str,
         specification: Any,
         ui_design: Any = "",
+        force_refresh_context: bool = False,
     ) -> dict[str, Any]:
         """Run one implementation/design agent from a saved specification."""
         if agent_key not in {"ui_ux", "frontend", "backend"}:
             raise ValueError("Only ui_ux, frontend, and backend can be run independently.")
 
-        repository_instructions = await self.repository.prepare()
+        repo_context = await self.prepare_repo_context(force_refresh=force_refresh_context)
+        repository_instructions = self.repository.instructions()
         output = await self._execute_task(
             agent_key,
             "",
@@ -268,7 +353,11 @@ BACKEND IMPLEMENTATION:
             output=output,
             system_prompt=self._effective_system_prompts.get(agent_key, ""),
         )
-        return {"output": output, **saved}
+        TursoStore().save_agent_output(
+            run_id=run_id, agent_name="repo_context", output=repo_context,
+            system_prompt=self._effective_system_prompts.get("repo_context", ""),
+        )
+        return {"output": output, "repo_context": repo_context, **saved}
 
     def _configured_agent(self, key: str, repository_instructions: str, repository_tools: list) -> Agent:
         agent = AGENTS[key]
@@ -299,6 +388,9 @@ async def run_project(
     project_name: str | None = None,
     github_token: str | None = None,
     project_id: int | None = None,
+    database_connections: list[dict] | None = None,
+    on_event: Callable[[dict], None] | None = None,
+    force_refresh_context: bool = False,
 ) -> dict[str, Any]:
     """Compatibility entrypoint used by the web and Vercel handlers."""
     store = TursoStore()
@@ -306,6 +398,14 @@ async def run_project(
     project_memories: list[dict[str, Any]] = []
     if project_id is not None:
         project = store.get_project(project_id)
+        if repository_url is None:
+            repository_url = project["github_repo"] or None
+        if github_token is None:
+            github_token = project["github_token"] or None
+        if prompts is None:
+            prompts = project["system_prompts"]
+        if database_connections is None:
+            database_connections = project.get("database_connections", [])
         project_context = project["project_context"][:8_000]
         project_memories = store.get_relevant_project_memories(
             project_id=project_id,
@@ -317,8 +417,13 @@ async def run_project(
         github_token,
         project_context,
         project_memories,
+        project_id=project_id,
+        database_connections=database_connections,
     )
-    result = await orchestrator.run(user_request)
+    options = {"on_event": on_event} if on_event else {}
+    if force_refresh_context:
+        options["force_refresh_context"] = True
+    result = await orchestrator.run(user_request, **options)
     saved = store.save_run(
         requirement_code=requirement_code.strip() if requirement_code and requirement_code.strip() else f"REQ-{uuid.uuid4().hex[:8].upper()}",
         project_name=project_name.strip() if project_name and project_name.strip() else "Unnamed project",
@@ -329,6 +434,7 @@ async def run_project(
             "frontend": result.frontend,
             "backend": result.backend,
             "tester": result.test_report,
+            "repo_context": result.repo_context,
         },
         system_prompts=orchestrator._effective_system_prompts,
     )

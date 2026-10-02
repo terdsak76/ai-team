@@ -6,6 +6,7 @@ from typing import Any
 from github_repository import GitHubRepositoryError, parse_github_repository
 from turso_store import TursoConfigurationError, TursoStore
 from workflow import get_default_prompts
+from muse.database_context import validate_database_connections
 
 
 PROMPT_KEYS = {"specification", "ui_ux", "frontend", "backend", "tester"}
@@ -61,6 +62,8 @@ def project_fields(payload: dict[str, Any], allow_blank_token: bool = False) -> 
         "project_context": project_context.strip(),
         "clear_github_token": bool(payload.get("clear_github_token", False)),
         "system_prompts": prompts,
+        "database_connections": validate_database_connections(payload["database_connections"])
+        if "database_connections" in payload else None,
     }
 
 

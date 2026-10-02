@@ -7,7 +7,7 @@ from config import get_model
 frontend_agent = Agent(
     name="Frontend Developer",
 
-    model=get_model("openai/gpt-5.6-sol"),
+    model=get_model("openai/gpt-6.1-sol"),
 
     model_settings={
         "reasoning": {

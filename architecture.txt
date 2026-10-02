@@ -1,0 +1,239 @@
+
+                   Muse
+                     │
+              Repo Context Agent
+                     │
+          ┌──────────┼──────────┐
+          ↓          ↓          ↓
+      repo_map    symbols    git diff
+          │          │          │
+          └──────────┼──────────┘
+                     ↓
+              Context Package
+                     ↓
+        ┌────────────┼────────────┐
+        ↓            ↓            ↓
+      Spec        Backend      Frontend
+                                  ↓
+                               Tester
+Role of Repo context agent
+
+create repo map
+src/
+├── app/
+│   ├── api/
+│   │   ├── employees/route.ts
+│   │   ├── leaves/route.ts
+│   │   └── travel-config/route.ts
+│   └── employees/page.tsx
+├── lib/
+│   ├── prisma.ts
+│   └── auth.ts
+└── components/
+    ├── EmployeeForm.tsx
+    └── Sidebar.tsx
+
+พร้อม metadata ของแต่ละไฟล์ เช่น:
+{
+  "src/app/api/travel-config/route.ts": {
+    "symbols": ["GET", "POST"],
+    "imports": ["prisma", "NextResponse"],
+    "summary": "API for reading/updating monthly travel configuration"
+  }
+}
+
+we should have Tree sitter
+                    Tree-sitter
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+       Python        Java               TypeScript
+                                      TSX / JSX
+                                         SQL
+          │              │              │
+          └──────────────┼──────────────┘
+                         ▼
+                    Repo Index
+
+The index should support Python, Java, TypeScript/JavaScript, TSX/JSX, and SQL.
+For Java, extract packages, imports, classes, interfaces, annotations, and
+methods. For SQL, extract tables, columns, keys, indexes, views, routines, and
+migrations where the selected SQL dialect permits it. ORM schemas and embedded
+queries should be linked to the corresponding database objects when possible.
+
+The context package should preserve relationships such as:
+
+Java Controller → Service → Repository → SQL table
+TypeScript API route → ORM model → SQL table
+
+then the use case is like this.
+User
+ │
+ ▼
+Muse
+ │
+ ▼
+Repo Map
+ │
+ ├─ search "optimize_route"
+ │
+ ▼
+Tree-sitter index
+ │
+ ▼
+shipment.py:67-102
+ │
+ ▼
+LLM reads ~35 lines
+
+
+send something like this to llm
+{
+  "src/app/api/travel-config/route.ts": {
+    "POST": {
+      "lines": [42, 105],
+      "imports": [
+        "@/lib/prisma",
+        "next/server"
+      ]
+    }
+  }
+}
+
+Agent ขอ:
+get_symbol(
+    file="src/app/api/travel-config/route.ts",
+    symbol="POST"
+)
+
+repo context agent สร้าง repo map เช่น
+
+Repo
+ ↓
+scan files
+ ↓
+extract symbols/imports   ← AST / code
+ ↓
+LLM อ่านเป็น batch
+ ↓
+.repo-map/
+ ├── repo.json
+ ├── architecture.md
+ ├── symbols.json
+ └── files/
+      ├── api-travel-config.md
+      ├── prisma.md
+      └── employee-form.md
+
+The generated `.repo-map` artifacts are persisted in Turso rather than relying
+on a local filesystem. Each repository revision creates a versioned snapshot in
+`repo_map_snapshot`, individual artifact documents in `repo_map_artifact`, and
+normalized ORM/database edges in `repo_relationship`.
+
+Implemented semantic architecture stage:
+Index source/schema -> Repo Context Architect (read-only LLM) -> save snapshot
+-> Specification -> UI/UX + Backend -> Frontend -> Tester.
+The bounded LLM summary is included in every development agent's context and in
+architecture.md. Extracted relationship edges retain their evidence/confidence;
+the LLM does not overwrite them. No configured source skips the LLM stage.
+The Repo Context UI panel shows live full-run indexing/summarizing/saving status,
+semantic summary, indexing counts/limits, stored artifact previews/downloads,
+and relationship edges. Saved runs retain their exact snapshot identifier in
+a repo_context prompt_output row; standalone reruns version this report too.
+The five development prompts remain editable; the read-only context agent has
+a fixed analysis policy in team_agents/repo_context.py.
+
+Project context reuse:
+Check saved snapshot + current GitHub commit + source/analysis configuration.
+Unchanged context -> restore indexed records/semantic summary from Turso; no
+file downloads, re-indexing, schema reflection, or architecture LLM requests.
+Changed commit/configuration or explicit refresh -> build a new snapshot.
+Live database metadata expires one hour after snapshot creation, independently
+of GitHub. Cache hits do not extend that expiry. Source reads are pinned to the
+checked commit SHA, and GitHub access errors never silently use a stale cache.
+Cache signatures/version live in context_json, so no new SQL columns are needed.
+Refresh Repo Context runs just the context stage, without a requirement or the
+development agents. The panel displays Reused/Rebuilt, reason, and cache age/expiry.
+
+Relationship inference should connect SQLAlchemy, JPA, and Prisma models to
+database tables, SQL foreign keys to referenced tables, and ORM relation fields
+to their related models. Every edge stores its type, confidence, and evidence
+so agents can distinguish deterministic schema facts from inferred mappings.
+
+Optional live database context:
+GitHub source index + PostgreSQL/MySQL/SQL Server schema + Turso schema
+                         ↓
+               merged context and relationships
+                         ↓
+        Turso snapshot artifacts, including database-schema.json
+
+Projects can enable a server database, Turso, or both. Connection configuration
+references credentials by server environment variable name. The schema readers
+inspect tables/views, columns, primary keys, foreign keys, and indexes; they do
+not read application rows. Agent Team's Turso storage connection remains
+separate from the optional database context sources.
+
+ตัวอย่าง repo.json:
+{
+  "src/app/api/travel-config/route.ts": {
+    "purpose": "Travel configuration REST API",
+    "symbols": ["GET", "POST"],
+    "dependencies": [
+      "@/lib/prisma",
+      "next/server"
+    ],
+    "related": [
+      "prisma/schema.prisma"
+    ]
+  },
+
+  "src/lib/prisma.ts": {
+    "purpose": "Prisma client initialization",
+    "symbols": ["prisma"],
+    "dependencies": []
+  }
+}
+
+ส่วน architecture.md ให้ LLM ทำ semantic understanding เช่น
+
+# Architecture
+
+Next.js 16 application
+
+## Employee Management
+UI:
+src/app/employees/page.tsx
+        ↓
+API:
+src/app/api/employees/route.ts
+        ↓
+Database:
+Prisma → Turso
+
+## Travel Configuration
+src/app/travel-config/page.tsx
+        ↓
+src/app/api/travel-config/route.ts
+        ↓
+TravelConfig model
+
+
+
+
+role of Spec/Frontend/Backend agent
+1. Read architecture.md
+2. Search repo.json
+3. Read relevant symbols
+4. Read additional files only if required
+5. Fix the issue
+
+วิธีการใช้งาน repo
+                Repo
+                  ↓
+             Repo Index
+                  ↓
+         Shared Context Store
+          ↙      ↓       ↘
+       Spec    Backend   Frontend
+                           ↓
+                         Tester

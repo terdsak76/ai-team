@@ -9,7 +9,7 @@ from schemas.specification import FeatureSpecification
 specification_agent = Agent(
     name="Software Requirements Analyst",
 
-    model=get_model("openai/gpt-5.6-sol"),
+    model=get_model("openai/gpt-6.1-sol"),
 
     instructions="""
 You are a senior software business analyst and solution architect.
